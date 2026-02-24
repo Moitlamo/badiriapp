@@ -6,6 +6,7 @@ import io
 import requests
 import base64
 import json
+import sqlite3  # NEW: The native database engine!
 
 # Try to load the PowerPoint library securely
 try:
@@ -15,14 +16,17 @@ try:
 except ImportError:
     HAS_PPTX = False
 
+# Try to load Plotly for the Calendar Timeline
+try:
+    import plotly.express as px
+    HAS_PLOTLY = True
+except ImportError:
+    HAS_PLOTLY = False
+
 # --- 1. APP CONFIGURATION ---
 st.set_page_config(page_title="Marumo Technologies - Badiri App", layout="wide")
 
-DB_FILE = "badiri_db.csv"
-USER_FILE = "badiri_users.csv"
-SUBTASK_FILE = "badiri_subtasks.csv"
-CHAT_FILE = "badiri_chat.csv"
-MAIL_FILE = "badiri_mail.csv" 
+DB_NAME = "badiri_backend.db" # The new secure SQL database file
 
 # --- 2. POWERPOINT GENERATOR ---
 def create_ppt(df, sub_df):
@@ -48,34 +52,79 @@ def create_ppt(df, sub_df):
     ppt_stream.seek(0)
     return ppt_stream
 
-# --- 3. SMART DATA PERSISTENCE ---
-def load_data(file, columns):
-    if os.path.exists(file):
-        df = pd.read_csv(file)
-        for col in columns:
-            if col not in df.columns:
-                if col == "Status": df[col] = "Active" if "User" in file else "Pending"
-                elif col == "Role": df[col] = "Standard"
-                elif col == "Password": df[col] = "1234" 
-                elif col == "Read": df[col] = "No" 
-                else: df[col] = ""
-        return df
-    return pd.DataFrame(columns=columns)
+# --- 3. DATABASE ENGINE (SQLite Upgrade) ---
 
-def save_data(df, file):
-    df.to_csv(file, index=False)
+def init_db_migration():
+    """Automatically migrates old CSV files to the new SQL database so no data is lost."""
+    conn = sqlite3.connect(DB_NAME)
+    csv_mapping = {
+        "tasks": "badiri_db.csv",
+        "subtasks": "badiri_subtasks.csv",
+        "users": "badiri_users.csv",
+        "chat": "badiri_chat.csv",
+        "mail": "badiri_mail.csv"
+    }
+    
+    for table_name, csv_file in csv_mapping.items():
+        if os.path.exists(csv_file):
+            try:
+                # Check if the SQL table already exists and has data
+                check = pd.read_sql(f"SELECT count(*) FROM {table_name}", conn)
+                if check.iloc[0,0] > 0:
+                    continue # Database already populated, skip migration
+            except:
+                pass # Table doesn't exist yet, proceed to migrate
+            
+            # Read old CSV and push to secure database
+            df = pd.read_csv(csv_file)
+            df.to_sql(table_name, conn, if_exists="replace", index=False)
+            
+            # Rename old CSV to backup so it doesn't overwrite again
+            os.rename(csv_file, f"{csv_file}.backup")
+            
+    conn.close()
+
+# Run the migration automatically on startup
+init_db_migration()
+
+def load_data(table_name, default_columns):
+    """Loads data securely from the SQLite database."""
+    conn = sqlite3.connect(DB_NAME)
+    try:
+        df = pd.read_sql(f"SELECT * FROM {table_name}", conn)
+    except:
+        # If table doesn't exist at all yet, create an empty one
+        df = pd.DataFrame(columns=default_columns)
+        df.to_sql(table_name, conn, if_exists="replace", index=False)
+    conn.close()
+    
+    # Ensure all required columns exist (for future-proofing updates)
+    for col in default_columns:
+        if col not in df.columns:
+            if col == "Status": df[col] = "Active" if table_name == "users" else "Pending"
+            elif col == "Role": df[col] = "Standard"
+            elif col == "Password": df[col] = "1234" 
+            elif col == "Read": df[col] = "No" 
+            else: df[col] = ""
+    return df
+
+def save_data(df, table_name):
+    """Saves data securely to the SQLite database."""
+    conn = sqlite3.connect(DB_NAME)
+    df.to_sql(table_name, conn, if_exists="replace", index=False)
+    conn.close()
 
 def show_inline_msg(location):
     if "inline_msg" in st.session_state and st.session_state.inline_msg.get("loc") == location:
         st.success(st.session_state.inline_msg["msg"])
         st.session_state.inline_msg = {} 
 
-# Initialize Databases & Session States
-if "task_db" not in st.session_state: st.session_state.task_db = load_data(DB_FILE, ["Project", "Task Name", "Assignee", "Status", "Date Added", "Due Date", "Comments"])
-if "subtask_db" not in st.session_state: st.session_state.subtask_db = load_data(SUBTASK_FILE, ["Project", "Parent Task", "Subtask Name", "Assignee", "Status", "Date Added", "Due Date", "Comments"])
-if "user_db" not in st.session_state: st.session_state.user_db = load_data(USER_FILE, ["Full Name", "Email", "Phone Number", "Status", "Role", "Password"])
-if "chat_db" not in st.session_state: st.session_state.chat_db = load_data(CHAT_FILE, ["Timestamp", "User", "Message"])
-if "mail_db" not in st.session_state: st.session_state.mail_db = load_data(MAIL_FILE, ["Timestamp", "From", "To", "Subject", "Message", "Read"])
+# Initialize Secure Databases & Session States
+if "task_db" not in st.session_state: st.session_state.task_db = load_data("tasks", ["Project", "Task Name", "Assignee", "Status", "Date Added", "Due Date", "Comments"])
+if "subtask_db" not in st.session_state: st.session_state.subtask_db = load_data("subtasks", ["Project", "Parent Task", "Subtask Name", "Assignee", "Status", "Date Added", "Due Date", "Comments"])
+if "user_db" not in st.session_state: st.session_state.user_db = load_data("users", ["Full Name", "Email", "Phone Number", "Status", "Role", "Password"])
+if "chat_db" not in st.session_state: st.session_state.chat_db = load_data("chat", ["Timestamp", "User", "Message"])
+if "mail_db" not in st.session_state: st.session_state.mail_db = load_data("mail", ["Timestamp", "From", "To", "Subject", "Message", "Read"])
 if "ai_suggestions" not in st.session_state: st.session_state.ai_suggestions = []
 if "chat_ai_suggestions" not in st.session_state: st.session_state.chat_ai_suggestions = [] 
 if "inline_msg" not in st.session_state: st.session_state.inline_msg = {}
@@ -144,7 +193,7 @@ else:
                 if st.form_submit_button("Create User"):
                     new_u = pd.DataFrame([{"Full Name": u_n, "Email": u_e, "Phone Number": "", "Status": "Active", "Role": u_r, "Password": u_p}])
                     st.session_state.user_db = pd.concat([st.session_state.user_db, new_u], ignore_index=True)
-                    save_data(st.session_state.user_db, USER_FILE)
+                    save_data(st.session_state.user_db, "users")
                     st.session_state.inline_msg = {"loc": "sidebar_admin", "msg": f"✅ New user '{u_n}' created!"}
                     st.rerun()
 
@@ -152,11 +201,11 @@ else:
     show_inline_msg("top") 
     st.divider()
 
-    # Dynamic Tab Generation (Removed right column for full-width view)
     tabs = ["🏠 My Desk"]
     if st.session_state.user_role != "Viewer Only": tabs.append("📋 Workspace")
+    tabs.append("📅 Project Calendar")
     tabs.append("📊 Reports")
-    tabs.append("💬 Team Communications") # Moved Chat & Mail to be immediately before AI
+    tabs.append("💬 Team Communications")
     if st.session_state.user_role != "Viewer Only": tabs.append("🧠 AI Project Manager")
     if st.session_state.is_admin: tabs.append("🛡️ Admin")
     
@@ -222,11 +271,11 @@ else:
                                 if t['Type'] == "Main":
                                     st.session_state.task_db.at[t['Idx'], "Status"] = "In Progress"
                                     st.session_state.task_db.at[t['Idx'], "Comments"] = new_cmt
-                                    save_data(st.session_state.task_db, DB_FILE)
+                                    save_data(st.session_state.task_db, "tasks")
                                 else:
                                     st.session_state.subtask_db.at[t['Idx'], "Status"] = "In Progress"
                                     st.session_state.subtask_db.at[t['Idx'], "Comments"] = new_cmt
-                                    save_data(st.session_state.subtask_db, SUBTASK_FILE)
+                                    save_data(st.session_state.subtask_db, "subtasks")
                                 
                                 st.session_state.inline_msg = {"loc": "desk_inbox", "msg": f"✅ Task '{t['Name']}' Accepted and moved to your active workspace!"}
                                 st.rerun()
@@ -236,18 +285,17 @@ else:
                                 if t['Type'] == "Main":
                                     st.session_state.task_db.at[t['Idx'], "Assignee"] = revert_user
                                     st.session_state.task_db.at[t['Idx'], "Comments"] = new_cmt
-                                    save_data(st.session_state.task_db, DB_FILE)
+                                    save_data(st.session_state.task_db, "tasks")
                                 else:
                                     st.session_state.subtask_db.at[t['Idx'], "Assignee"] = revert_user
                                     st.session_state.subtask_db.at[t['Idx'], "Comments"] = new_cmt
-                                    save_data(st.session_state.subtask_db, SUBTASK_FILE)
+                                    save_data(st.session_state.subtask_db, "subtasks")
                                     
                                 st.session_state.inline_msg = {"loc": "desk_inbox", "msg": f"✅ Task Reverted and reassigned to {revert_user}!"}
                                 st.rerun()
 
         st.divider()
         
-        # --- ACTIVE WORKSPACE SECTION ---
         st.markdown("### 🏃‍♂️ My Active Workspace")
         show_inline_msg("desk_active") 
         st.caption("Click on any task below to log your progress, add comments, or complete it.")
@@ -274,16 +322,15 @@ else:
                             if t['Type'] == "Main":
                                 st.session_state.task_db.at[t['Idx'], "Status"] = new_status
                                 st.session_state.task_db.at[t['Idx'], "Comments"] = final_comments
-                                save_data(st.session_state.task_db, DB_FILE)
+                                save_data(st.session_state.task_db, "tasks")
                             else:
                                 st.session_state.subtask_db.at[t['Idx'], "Status"] = new_status
                                 st.session_state.subtask_db.at[t['Idx'], "Comments"] = final_comments
-                                save_data(st.session_state.subtask_db, SUBTASK_FILE)
+                                save_data(st.session_state.subtask_db, "subtasks")
                                 
                             st.session_state.inline_msg = {"loc": "desk_active", "msg": f"✅ Progress saved for '{t['Name']}'! Status: {new_status}"}
                             st.rerun()
 
-                    # Add Subtask Feature (Only for Main Tasks)
                     if t['Type'] == "Main":
                         st.markdown("---")
                         st.markdown("##### ➕ Create Subtask")
@@ -307,7 +354,7 @@ else:
                                         "Comments": ""
                                     }])
                                     st.session_state.subtask_db = pd.concat([st.session_state.subtask_db, new_sub], ignore_index=True)
-                                    save_data(st.session_state.subtask_db, SUBTASK_FILE)
+                                    save_data(st.session_state.subtask_db, "subtasks")
                                     st.session_state.inline_msg = {"loc": "desk_active", "msg": f"✅ Subtask '{s_name}' created under '{t['Name']}'!"}
                                     st.rerun()
                                 else:
@@ -344,7 +391,7 @@ else:
                             if st.form_submit_button("Add Task") and t_name:
                                 new_task = pd.DataFrame([{"Project": active_project, "Task Name": t_name, "Assignee": t_assignee, "Status": t_status, "Date Added": datetime.now().strftime("%Y-%m-%d"), "Due Date": str(t_due), "Comments": t_comments}])
                                 st.session_state.task_db = pd.concat([st.session_state.task_db, new_task], ignore_index=True)
-                                save_data(st.session_state.task_db, DB_FILE)
+                                save_data(st.session_state.task_db, "tasks")
                                 st.session_state.inline_msg = {"loc": "ws_add_main", "msg": f"✅ New task '{t_name}' added to workspace!"}
                                 st.rerun()
                     with edit_col:
@@ -363,7 +410,7 @@ else:
                                         st.session_state.task_db.at[selected_idx, "Assignee"] = new_assignee
                                         st.session_state.task_db.at[selected_idx, "Status"] = new_status
                                         st.session_state.task_db.at[selected_idx, "Comments"] = new_comments
-                                        save_data(st.session_state.task_db, DB_FILE)
+                                        save_data(st.session_state.task_db, "tasks")
                                         st.session_state.inline_msg = {"loc": "ws_upd_main", "msg": "✅ Task successfully updated!"}
                                         st.rerun()
 
@@ -384,7 +431,7 @@ else:
                                     if st.form_submit_button("Add Subtask") and s_name:
                                         new_sub = pd.DataFrame([{"Project": active_project, "Parent Task": parent_task, "Subtask Name": s_name, "Assignee": s_assignee, "Status": "Pending", "Date Added": datetime.now().strftime("%Y-%m-%d"), "Due Date": str(s_due), "Comments": ""}])
                                         st.session_state.subtask_db = pd.concat([st.session_state.subtask_db, new_sub], ignore_index=True)
-                                        save_data(st.session_state.subtask_db, SUBTASK_FILE)
+                                        save_data(st.session_state.subtask_db, "subtasks")
                                         st.session_state.inline_msg = {"loc": "ws_add_sub", "msg": f"✅ New subtask '{s_name}' added!"}
                                         st.rerun()
                             with s_edit_col:
@@ -397,11 +444,57 @@ else:
                                             new_s_status = st.selectbox("Status", ["Pending", "In Progress", "Completed"])
                                             if st.form_submit_button("Save Subtask"):
                                                 st.session_state.subtask_db.at[sub_idx, "Status"] = new_s_status
-                                                save_data(st.session_state.subtask_db, SUBTASK_FILE)
+                                                save_data(st.session_state.subtask_db, "subtasks")
                                                 st.session_state.inline_msg = {"loc": "ws_upd_sub", "msg": "✅ Subtask successfully updated!"}
                                                 st.rerun()
 
-    # --- TAB 3: REPORTS ---
+    # --- TAB 3: PROJECT CALENDAR ---
+    tab_index += 1
+    with tab_list[tab_index]:
+        st.subheader("📅 Project Calendar & Visual Timeline")
+        st.markdown("Track exactly when tasks begin and when they are due.")
+        
+        m_cal = df.copy()
+        s_cal = sub_df_all.copy()
+        
+        if m_cal.empty and s_cal.empty:
+            st.info("No tasks to display on the calendar.")
+        else:
+            if not m_cal.empty: m_cal["Task Display"] = "[Main] " + m_cal["Task Name"]
+            if not s_cal.empty: s_cal["Task Display"] = "[Sub] " + s_cal["Subtask Name"]
+            
+            cal_df = pd.concat([
+                m_cal[["Project", "Task Display", "Assignee", "Status", "Date Added", "Due Date"]] if not m_cal.empty else pd.DataFrame(columns=["Project", "Task Display", "Assignee", "Status", "Date Added", "Due Date"]),
+                s_cal[["Project", "Task Display", "Assignee", "Status", "Date Added", "Due Date"]] if not s_cal.empty else pd.DataFrame(columns=["Project", "Task Display", "Assignee", "Status", "Date Added", "Due Date"])
+            ], ignore_index=True)
+            
+            cal_df["Start"] = pd.to_datetime(cal_df["Date Added"], errors='coerce')
+            cal_df["End"] = pd.to_datetime(cal_df["Due Date"], errors='coerce')
+            cal_df["End"] = cal_df.apply(lambda x: x["Start"] + pd.Timedelta(days=1) if pd.isna(x["End"]) or x["Start"] == x["End"] else x["End"], axis=1)
+            cal_df = cal_df.dropna(subset=["Start", "End"])
+            
+            if not cal_df.empty:
+                cal_df = cal_df.sort_values("End")
+                if HAS_PLOTLY:
+                    fig = px.timeline(cal_df, x_start="Start", x_end="End", y="Task Display", color="Project", hover_name="Assignee", hover_data=["Status", "Due Date"], height=500)
+                    fig.update_yaxes(autorange="reversed") 
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("⚠️ **Plotly Required:** To see the visual timeline, please add `plotly` to your `requirements.txt` file and reboot the app.")
+
+                st.divider()
+                st.markdown("#### 🚨 Upcoming Deadlines (Next 7 Days)")
+                today = pd.Timestamp.now().normalize()
+                next_week = today + pd.Timedelta(days=7)
+                
+                upcoming = cal_df[(cal_df["End"] >= today) & (cal_df["End"] <= next_week) & (cal_df["Status"] != "Completed")]
+                if upcoming.empty:
+                    st.success("You are all clear! No pending deadlines in the next 7 days. 🎉")
+                else:
+                    st.dataframe(upcoming[["Project", "Task Display", "Assignee", "Status", "Due Date"]].rename(columns={"Task Display": "Task"}), hide_index=True, use_container_width=True)
+
+
+    # --- TAB 4: REPORTS ---
     tab_index += 1
     with tab_list[tab_index]:
         if df.empty:
@@ -452,9 +545,10 @@ else:
                 if HAS_PPTX:
                     st.download_button("📊 Download PowerPoint", data=create_ppt(df, sub_df_all), file_name=f"Report_{datetime.now().strftime('%Y%m%d')}.pptx")
             with ex2:
+                # Raw CSV export still works fine by reading from the active dataframes!
                 st.download_button("📈 Download CSV Export", data=df.to_csv(index=False).encode('utf-8'), file_name=f"Data_{datetime.now().strftime('%Y%m%d')}.csv")
 
-    # --- TAB 4: TEAM COMMUNICATIONS (MAIL + CHAT) ---
+    # --- TAB 5: TEAM COMMUNICATIONS (MAIL + CHAT) ---
     tab_index += 1
     with tab_list[tab_index]:
         st.subheader("💬 Team Communications")
@@ -462,7 +556,7 @@ else:
         comm_tabs = st.tabs(["💬 Global Team Chat", "📥 Mail Inbox", "📤 Compose Mail"])
         
         with comm_tabs[0]:
-            st.session_state.chat_db = load_data(CHAT_FILE, ["Timestamp", "User", "Message"])
+            st.session_state.chat_db = load_data("chat", ["Timestamp", "User", "Message"])
             chat_container = st.container(height=400)
             with chat_container:
                 if st.session_state.chat_db.empty:
@@ -480,7 +574,7 @@ else:
                 if c1.form_submit_button("📨 Send Message") and m:
                     new_c = pd.DataFrame([{"Timestamp": datetime.now().strftime("%H:%M"), "User": st.session_state.current_user, "Message": m}])
                     st.session_state.chat_db = pd.concat([st.session_state.chat_db, new_c], ignore_index=True)
-                    save_data(st.session_state.chat_db, CHAT_FILE)
+                    save_data(st.session_state.chat_db, "chat")
                     st.rerun()
                 if c2.form_submit_button("🔄 Refresh Chat"): st.rerun()
 
@@ -497,7 +591,7 @@ else:
                         if row["Read"] == "No":
                             if st.button("Mark as Read", key=f"read_mail_{idx}"):
                                 st.session_state.mail_db.at[idx, "Read"] = "Yes"
-                                save_data(st.session_state.mail_db, MAIL_FILE)
+                                save_data(st.session_state.mail_db, "mail")
                                 st.session_state.inline_msg = {"loc": "mail_inbox", "msg": "✅ Mail marked as read."}
                                 st.rerun()
 
@@ -518,13 +612,13 @@ else:
                             "Read": "No"
                         }])
                         st.session_state.mail_db = pd.concat([st.session_state.mail_db, new_mail], ignore_index=True)
-                        save_data(st.session_state.mail_db, MAIL_FILE)
+                        save_data(st.session_state.mail_db, "mail")
                         st.session_state.inline_msg = {"loc": "mail_compose", "msg": f"✅ Secure mail successfully sent to {to_user}!"}
                         st.rerun()
                     else:
                         st.error("Please fill in subject and message.")
 
-    # --- TAB 5: AI PROJECT MANAGER ---
+    # --- TAB 6: AI PROJECT MANAGER ---
     if st.session_state.user_role != "Viewer Only":
         tab_index += 1
         with tab_list[tab_index]:
@@ -554,7 +648,7 @@ else:
                             if sel: 
                                 st.session_state.task_db = pd.concat([st.session_state.task_db, pd.DataFrame([{"Project": st.session_state.ai_suggestions[i]['Project'], "Task Name": st.session_state.ai_suggestions[i]['Task Name'], "Assignee": st.session_state.ai_suggestions[i]['Assignee'], "Status": "Pending", "Date Added": datetime.now().strftime("%Y-%m-%d"), "Due Date": datetime.now().strftime("%Y-%m-%d"), "Comments": "AI extracted"}])], ignore_index=True)
                                 added += 1
-                        save_data(st.session_state.task_db, DB_FILE)
+                        save_data(st.session_state.task_db, "tasks")
                         st.session_state.ai_suggestions = []
                         st.session_state.inline_msg = {"loc": "ai_img", "msg": f"✅ {added} task(s) imported from the document!"}
                         st.rerun()
@@ -580,12 +674,12 @@ else:
                             if sel: 
                                 st.session_state.task_db = pd.concat([st.session_state.task_db, pd.DataFrame([{"Project": st.session_state.chat_ai_suggestions[i]['Project'], "Task Name": st.session_state.chat_ai_suggestions[i]['Task Name'], "Assignee": st.session_state.chat_ai_suggestions[i]['Assignee'], "Status": "Pending", "Date Added": datetime.now().strftime("%Y-%m-%d"), "Due Date": datetime.now().strftime("%Y-%m-%d"), "Comments": "Chat AI extracted"}])], ignore_index=True)
                                 added += 1
-                        save_data(st.session_state.task_db, DB_FILE)
+                        save_data(st.session_state.task_db, "tasks")
                         st.session_state.chat_ai_suggestions = []
                         st.session_state.inline_msg = {"loc": "ai_chat", "msg": f"✅ {added} task(s) automatically extracted from chat!"}
                         st.rerun()
 
-    # --- TAB 6: ADMIN ---
+    # --- TAB 7: ADMIN ---
     if st.session_state.is_admin:
         tab_index += 1
         with tab_list[tab_index]:
@@ -609,7 +703,7 @@ else:
                     n_pw = c2.text_input("Password", value=curr_user["Password"], type="password")
                     if st.form_submit_button("Save"):
                         st.session_state.user_db.loc[idx] = [n_n, n_e, n_p, n_s, n_r, n_pw]
-                        save_data(st.session_state.user_db, USER_FILE)
+                        save_data(st.session_state.user_db, "users")
                         st.session_state.inline_msg = {"loc": "admin_edit", "msg": f"✅ Profile for {n_n} updated successfully."}
                         st.rerun()
 
