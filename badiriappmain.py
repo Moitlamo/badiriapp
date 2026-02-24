@@ -291,6 +291,7 @@ else:
                     st.write(f"**Due Date:** {t['Due']}")
                     st.write(f"**Current Notes:**\n{t['Comments'] if pd.notna(t['Comments']) and t['Comments'].strip() and t['Comments'] != 'nan' else 'No notes provided.'}")
                     
+                    # Display existing attachments
                     if pd.notna(t['Attachments']) and t['Attachments'] != "" and t['Attachments'] != "nan":
                         st.markdown("**📎 Task Attachments:**")
                         att_files = t['Attachments'].split('|')
@@ -303,6 +304,7 @@ else:
                     with st.form(f"update_active_{t['Type']}_{t['Idx']}"):
                         new_status = st.selectbox("Update Status", ["Pending", "In Progress", "Completed"], index=["Pending", "In Progress", "Completed"].index(t['Status']))
                         added_comment = st.text_area("Add a progress update / final notes:")
+                        
                         uploaded_file = st.file_uploader("Upload Document / Receipt (Optional)")
                         
                         if st.form_submit_button("💾 Save Progress"):
@@ -363,7 +365,7 @@ else:
                                 else:
                                     st.error("Please provide a subtask name.")
 
-    # --- TAB 2: WORKSPACE (MAJOR UI REFRESH) ---
+    # --- TAB 2: WORKSPACE ---
     if st.session_state.user_role != "Viewer Only":
         tab_index += 1
         with tab_list[tab_index]:
@@ -733,7 +735,7 @@ else:
 
             # --- EXTRACT FROM CHAT ---
             st.markdown("#### 💬 Extract Tasks from Chat logs")
-            if button("🧠 Analyze Chat Logs"):
+            if st.button("🧠 Analyze Chat Logs"): # <--- FIXED HERE
                 if gemini_key and not st.session_state.chat_db.empty:
                     with st.spinner("Mining chat..."):
                         transcript = "\n".join([f"{r['User']}: {r['Message']}" for _, r in st.session_state.chat_db.tail(30).iterrows()])
