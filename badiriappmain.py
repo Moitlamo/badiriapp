@@ -65,6 +65,12 @@ def load_data(file, columns):
 def save_data(df, file):
     df.to_csv(file, index=False)
 
+# NEW: TARGETED INLINE MESSAGE SYSTEM
+def show_inline_msg(location):
+    if "inline_msg" in st.session_state and st.session_state.inline_msg.get("loc") == location:
+        st.success(st.session_state.inline_msg["msg"])
+        st.session_state.inline_msg = {} # Clear immediately after showing
+
 # Initialize Databases & Session States
 if "task_db" not in st.session_state: st.session_state.task_db = load_data(DB_FILE, ["Project", "Task Name", "Assignee", "Status", "Date Added", "Due Date", "Comments"])
 if "subtask_db" not in st.session_state: st.session_state.subtask_db = load_data(SUBTASK_FILE, ["Project", "Parent Task", "Subtask Name", "Assignee", "Status", "Date Added", "Due Date", "Comments"])
@@ -73,7 +79,7 @@ if "chat_db" not in st.session_state: st.session_state.chat_db = load_data(CHAT_
 if "mail_db" not in st.session_state: st.session_state.mail_db = load_data(MAIL_FILE, ["Timestamp", "From", "To", "Subject", "Message", "Read"])
 if "ai_suggestions" not in st.session_state: st.session_state.ai_suggestions = []
 if "chat_ai_suggestions" not in st.session_state: st.session_state.chat_ai_suggestions = [] 
-if "flash_msg" not in st.session_state: st.session_state.flash_msg = "" # NEW: Notification System
+if "inline_msg" not in st.session_state: st.session_state.inline_msg = {}
 
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
@@ -97,7 +103,7 @@ if not st.session_state.logged_in:
                 st.session_state.current_user = "Master Admin"
                 st.session_state.user_role = "Admin"
                 st.session_state.is_admin = True
-                st.session_state.flash_msg = "✅ Logged in successfully as Master Admin!"
+                st.session_state.inline_msg = {"loc": "top", "msg": "✅ Logged in successfully as Master Admin!"}
                 st.rerun()
             else:
                 safe_db = st.session_state.user_db.copy()
@@ -110,7 +116,7 @@ if not st.session_state.logged_in:
                     st.session_state.current_user = st.session_state.user_db.at[idx, "Full Name"]
                     st.session_state.user_role = st.session_state.user_db.at[idx, "Role"]
                     st.session_state.is_admin = (st.session_state.user_role == "Admin")
-                    st.session_state.flash_msg = f"✅ Welcome back, {st.session_state.current_user}!"
+                    st.session_state.inline_msg = {"loc": "top", "msg": f"✅ Welcome back, {st.session_state.current_user}!"}
                     st.rerun()
                 else:
                     st.error("❌ Invalid Credentials")
@@ -130,6 +136,7 @@ else:
         st.divider()
         if st.session_state.is_admin:
             st.subheader("👤 Register User")
+            show_inline_msg("sidebar_admin") # Target for Admin Registration
             with st.form("user_form", clear_on_submit=True):
                 u_n = st.text_input("Name")
                 u_e = st.text_input("Email")
@@ -139,16 +146,11 @@ else:
                     new_u = pd.DataFrame([{"Full Name": u_n, "Email": u_e, "Phone Number": "", "Status": "Active", "Role": u_r, "Password": u_p}])
                     st.session_state.user_db = pd.concat([st.session_state.user_db, new_u], ignore_index=True)
                     save_data(st.session_state.user_db, USER_FILE)
-                    st.session_state.flash_msg = f"✅ New user '{u_n}' created successfully!"
+                    st.session_state.inline_msg = {"loc": "sidebar_admin", "msg": f"✅ New user '{u_n}' created!"}
                     st.rerun()
 
     st.title("🛠️ Project Management Dashboard")
-    
-    # --- FLASH NOTIFICATION DISPLAY ---
-    if st.session_state.flash_msg:
-        st.success(st.session_state.flash_msg)
-        st.session_state.flash_msg = "" # Clear it so it only shows once
-        
+    show_inline_msg("top") # Target for Login
     st.divider()
 
     main_col, chat_col = st.columns([3, 1], gap="large")
@@ -182,6 +184,7 @@ else:
             st.divider()
             
             st.markdown("### ⚡ Inbox: Action Required")
+            show_inline_msg("desk_inbox") # Target for Inbox Task Accepted/Reverted
             st.caption("These are new tasks assigned to you. Open them to Accept the work or Revert them to someone else.")
             
             unack_tasks = []
@@ -221,7 +224,7 @@ else:
                                         st.session_state.subtask_db.at[t['Idx'], "Comments"] = new_cmt
                                         save_data(st.session_state.subtask_db, SUBTASK_FILE)
                                     
-                                    st.session_state.flash_msg = "✅ Task Accepted and moved to your active workspace!"
+                                    st.session_state.inline_msg = {"loc": "desk_inbox", "msg": "✅ Task Accepted and moved to your active workspace!"}
                                     st.rerun()
                                 else:
                                     note_text = notes.strip() if notes.strip() else "Task reverted."
@@ -235,25 +238,20 @@ else:
                                         st.session_state.subtask_db.at[t['Idx'], "Comments"] = new_cmt
                                         save_data(st.session_state.subtask_db, SUBTASK_FILE)
                                         
-                                    st.session_state.flash_msg = f"✅ Task Reverted and reassigned to {revert_user}!"
+                                    st.session_state.inline_msg = {"loc": "desk_inbox", "msg": f"✅ Task Reverted and reassigned to {revert_user}!"}
                                     st.rerun()
 
             st.divider()
             
             st.markdown("### 🏃‍♂️ Tasks In Progress")
+            show_inline_msg("desk_active") # Target for Progress Updates
+            
             my_active_main = df[(df["Assignee"] == st.session_state.current_user) & (df["Status"] == "In Progress")]
             my_active_sub = sub_df_all[(sub_df_all["Assignee"] == st.session_state.current_user) & (sub_df_all["Status"] == "In Progress")]
             
             if my_active_main.empty and my_active_sub.empty:
                 st.info("You don't have any active tasks currently in progress.")
             else:
-                if not my_active_main.empty: 
-                    st.markdown("**Main Tasks:**")
-                    st.dataframe(my_active_main[["Project", "Task Name", "Status", "Due Date"]], hide_index=True, use_container_width=True)
-                if not my_active_sub.empty: 
-                    st.markdown("**Subtasks:**")
-                    st.dataframe(my_active_sub[["Project", "Parent Task", "Subtask Name", "Status", "Due Date"]], hide_index=True, use_container_width=True)
-
                 st.markdown("##### 📝 Update Active Task Progress")
                 active_options = []
                 for real_idx, row in my_active_main.iterrows():
@@ -297,7 +295,7 @@ else:
                                 st.session_state.subtask_db.at[real_idx, "Comments"] = final_comments
                                 save_data(st.session_state.subtask_db, SUBTASK_FILE)
                                 
-                            st.session_state.flash_msg = f"✅ Progress saved! Status updated to: {new_status}"
+                            st.session_state.inline_msg = {"loc": "desk_active", "msg": f"✅ Progress saved! Status updated to: {new_status}"}
                             st.rerun()
         tab_index += 1
 
@@ -307,6 +305,7 @@ else:
             mail_tabs = st.tabs(["📥 Inbox", "📤 Compose Mail"])
             
             with mail_tabs[0]:
+                show_inline_msg("mail_inbox") # Target for Mail Read
                 my_mail = st.session_state.mail_db[st.session_state.mail_db["To"] == st.session_state.current_user]
                 if my_mail.empty:
                     st.info("Your inbox is empty.")
@@ -319,10 +318,11 @@ else:
                                 if st.button("Mark as Read", key=f"read_mail_{idx}"):
                                     st.session_state.mail_db.at[idx, "Read"] = "Yes"
                                     save_data(st.session_state.mail_db, MAIL_FILE)
-                                    st.session_state.flash_msg = "✅ Mail marked as read."
+                                    st.session_state.inline_msg = {"loc": "mail_inbox", "msg": "✅ Mail marked as read."}
                                     st.rerun()
 
             with mail_tabs[1]:
+                show_inline_msg("mail_compose") # Target for Mail Sent
                 with st.form("compose_mail_form", clear_on_submit=True):
                     to_user = st.selectbox("Send To:", user_list)
                     subject = st.text_input("Subject")
@@ -339,7 +339,7 @@ else:
                             }])
                             st.session_state.mail_db = pd.concat([st.session_state.mail_db, new_mail], ignore_index=True)
                             save_data(st.session_state.mail_db, MAIL_FILE)
-                            st.session_state.flash_msg = f"✅ Secure mail successfully sent to {to_user}!"
+                            st.session_state.inline_msg = {"loc": "mail_compose", "msg": f"✅ Secure mail successfully sent to {to_user}!"}
                             st.rerun()
                         else:
                             st.error("Please fill in subject and message.")
@@ -365,6 +365,7 @@ else:
                     with st.expander("📝 Main Tasks", expanded=True):
                         add_col, edit_col = st.columns(2)
                         with add_col:
+                            show_inline_msg("ws_add_main") # Target for Add Main Task
                             with st.form("workspace_add_task_form", clear_on_submit=True):
                                 t_name = st.text_input("Task Name")
                                 t_assignee = st.selectbox("Assign To", user_list)
@@ -375,9 +376,10 @@ else:
                                     new_task = pd.DataFrame([{"Project": active_project, "Task Name": t_name, "Assignee": t_assignee, "Status": t_status, "Date Added": datetime.now().strftime("%Y-%m-%d"), "Due Date": str(t_due), "Comments": t_comments}])
                                     st.session_state.task_db = pd.concat([st.session_state.task_db, new_task], ignore_index=True)
                                     save_data(st.session_state.task_db, DB_FILE)
-                                    st.session_state.flash_msg = f"✅ New task '{t_name}' added to workspace!"
+                                    st.session_state.inline_msg = {"loc": "ws_add_main", "msg": f"✅ New task '{t_name}' added to workspace!"}
                                     st.rerun()
                         with edit_col:
+                            show_inline_msg("ws_upd_main") # Target for Update Main Task
                             if not proj_df.empty:
                                 task_dict = {idx: row["Task Name"] for idx, row in proj_df.iterrows()}
                                 selected_idx = st.selectbox("Update Task", options=list(task_dict.keys()), format_func=lambda x: task_dict[x])
@@ -393,7 +395,7 @@ else:
                                             st.session_state.task_db.at[selected_idx, "Status"] = new_status
                                             st.session_state.task_db.at[selected_idx, "Comments"] = new_comments
                                             save_data(st.session_state.task_db, DB_FILE)
-                                            st.session_state.flash_msg = "✅ Task successfully updated!"
+                                            st.session_state.inline_msg = {"loc": "ws_upd_main", "msg": "✅ Task successfully updated!"}
                                             st.rerun()
 
                     with st.expander("🗂️ Subtasks", expanded=False):
@@ -405,6 +407,7 @@ else:
                                 
                                 s_add_col, s_edit_col = st.columns(2)
                                 with s_add_col:
+                                    show_inline_msg("ws_add_sub") # Target for Add Subtask
                                     with st.form("add_sub_form", clear_on_submit=True):
                                         s_name = st.text_input("Subtask Name")
                                         s_assignee = st.selectbox("Assign To", user_list)
@@ -413,9 +416,10 @@ else:
                                             new_sub = pd.DataFrame([{"Project": active_project, "Parent Task": parent_task, "Subtask Name": s_name, "Assignee": s_assignee, "Status": "Pending", "Date Added": datetime.now().strftime("%Y-%m-%d"), "Due Date": str(s_due), "Comments": ""}])
                                             st.session_state.subtask_db = pd.concat([st.session_state.subtask_db, new_sub], ignore_index=True)
                                             save_data(st.session_state.subtask_db, SUBTASK_FILE)
-                                            st.session_state.flash_msg = f"✅ New subtask '{s_name}' added!"
+                                            st.session_state.inline_msg = {"loc": "ws_add_sub", "msg": f"✅ New subtask '{s_name}' added!"}
                                             st.rerun()
                                 with s_edit_col:
+                                    show_inline_msg("ws_upd_sub") # Target for Update Subtask
                                     if not active_subtasks.empty:
                                         sub_dict = {idx: row["Subtask Name"] for idx, row in active_subtasks.iterrows()}
                                         sub_idx = st.selectbox("Update Subtask", options=list(sub_dict.keys()), format_func=lambda x: sub_dict[x])
@@ -425,7 +429,7 @@ else:
                                                 if st.form_submit_button("Save Subtask"):
                                                     st.session_state.subtask_db.at[sub_idx, "Status"] = new_s_status
                                                     save_data(st.session_state.subtask_db, SUBTASK_FILE)
-                                                    st.session_state.flash_msg = "✅ Subtask successfully updated!"
+                                                    st.session_state.inline_msg = {"loc": "ws_upd_sub", "msg": "✅ Subtask successfully updated!"}
                                                     st.rerun()
             tab_index += 1
 
@@ -499,6 +503,7 @@ else:
                             if 'candidates' in res: st.session_state.ai_suggestions = json.loads(res['candidates'][0]['content']['parts'][0]['text'].replace("```json","").replace("```","").strip())
                 
                 if st.session_state.ai_suggestions and st.session_state.is_admin:
+                    show_inline_msg("ai_img") # Target for AI Image
                     with st.form("img_approval"):
                         st.write("**Select items to import into Workspace:**")
                         img_sels = [st.checkbox(f"{it['Project']} | {it['Task Name']} ({it['Assignee']})", value=True, key=f"img_c_{i}") for i, it in enumerate(st.session_state.ai_suggestions)]
@@ -510,7 +515,7 @@ else:
                                     added += 1
                             save_data(st.session_state.task_db, DB_FILE)
                             st.session_state.ai_suggestions = []
-                            st.session_state.flash_msg = f"✅ {added} task(s) imported from the document!"
+                            st.session_state.inline_msg = {"loc": "ai_img", "msg": f"✅ {added} task(s) imported from the document!"}
                             st.rerun()
 
                 st.divider()
@@ -524,6 +529,7 @@ else:
                             if 'candidates' in res: st.session_state.chat_ai_suggestions = json.loads(res['candidates'][0]['content']['parts'][0]['text'].replace("```json","").replace("```","").strip())
 
                 if st.session_state.chat_ai_suggestions and st.session_state.is_admin:
+                    show_inline_msg("ai_chat") # Target for AI Chat
                     with st.form("chat_approval"):
                         st.write("**Select chat promises to import:**")
                         chat_sels = [st.checkbox(f"{it['Project']} | {it['Task Name']} ({it['Assignee']})", value=True, key=f"chat_c_{i}") for i, it in enumerate(st.session_state.chat_ai_suggestions)]
@@ -535,7 +541,7 @@ else:
                                     added += 1
                             save_data(st.session_state.task_db, DB_FILE)
                             st.session_state.chat_ai_suggestions = []
-                            st.session_state.flash_msg = f"✅ {added} task(s) automatically extracted from chat!"
+                            st.session_state.inline_msg = {"loc": "ai_chat", "msg": f"✅ {added} task(s) automatically extracted from chat!"}
                             st.rerun()
             tab_index += 1
 
@@ -547,6 +553,7 @@ else:
                 
                 st.divider()
                 st.write("**📝 Edit User**")
+                show_inline_msg("admin_edit") # Target for Admin Edit
                 user_to_update = st.selectbox("Select User", ["-- Select User --"] + st.session_state.user_db["Full Name"].tolist())
                 if user_to_update != "-- Select User --":
                     curr_user = st.session_state.user_db[st.session_state.user_db["Full Name"] == user_to_update].iloc[0]
@@ -562,7 +569,7 @@ else:
                         if st.form_submit_button("Save"):
                             st.session_state.user_db.loc[idx] = [n_n, n_e, n_p, n_s, n_r, n_pw]
                             save_data(st.session_state.user_db, USER_FILE)
-                            st.session_state.flash_msg = f"✅ Profile for {n_n} updated successfully."
+                            st.session_state.inline_msg = {"loc": "admin_edit", "msg": f"✅ Profile for {n_n} updated successfully."}
                             st.rerun()
 
     # --- NATIVE CHAT PANEL (Right Side) ---
