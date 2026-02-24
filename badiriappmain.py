@@ -166,13 +166,25 @@ else:
         df = st.session_state.task_db
         sub_df_all = st.session_state.subtask_db
 
-        # --- TAB 1: MY DESK (MASSIVE UI UPGRADE) ---
+        # --- TAB 1: MY DESK ---
         with tab_list[tab_index]:
             st.subheader(f"👋 Welcome, {st.session_state.current_user}!")
             
-            # Smartly separate tasks into "Inbox" (Untouched) and "Active" (Acknowledged/Working)
             my_main = df[(df["Assignee"] == st.session_state.current_user) & (df["Status"] != "Completed")]
             my_sub = sub_df_all[(sub_df_all["Assignee"] == st.session_state.current_user) & (sub_df_all["Status"] != "Completed")]
+            
+            if not my_main.empty: 
+                st.markdown("**📌 Your Pending Main Tasks:**")
+                st.dataframe(my_main[["Project", "Task Name", "Status", "Due Date"]], hide_index=True, use_container_width=True)
+            if not my_sub.empty: 
+                st.markdown("**📎 Your Pending Subtasks:**")
+                st.dataframe(my_sub[["Project", "Parent Task", "Subtask Name", "Status", "Due Date"]], hide_index=True, use_container_width=True)
+
+            st.divider()
+            
+            st.markdown("### ⚡ Inbox: Action Required")
+            show_inline_msg("desk_inbox") 
+            st.caption("New assignments. Open to Accept the work or Revert to someone else.")
             
             inbox_tasks = []
             active_tasks = []
@@ -189,11 +201,6 @@ else:
                 if is_unacknowledged: inbox_tasks.append(t_data)
                 else: active_tasks.append(t_data)
 
-            # --- INBOX SECTION ---
-            st.markdown("### ⚡ Inbox: Action Required")
-            show_inline_msg("desk_inbox") 
-            st.caption("New assignments. Open to Accept the work or Revert to someone else.")
-            
             if len(inbox_tasks) == 0:
                 st.info("✅ Inbox Zero! You have no new tasks waiting.")
             else:
@@ -244,18 +251,18 @@ else:
             # --- ACTIVE WORKSPACE SECTION ---
             st.markdown("### 🏃‍♂️ My Active Workspace")
             show_inline_msg("desk_active") 
-            st.caption("Click on any task below to log your progress, add comments, or mark it as completed.")
+            st.caption("Click on any task below to log your progress, add comments, or complete it.")
             
             if len(active_tasks) == 0:
                 st.info("You don't have any active tasks currently in progress.")
             else:
                 for t in active_tasks:
-                    # Visual indicator if it's still marked pending or in progress
                     icon = "⏳" if t['Status'] == "Pending" else "🚀"
                     with st.expander(f"{icon} [{t['Type']}] {t['Project']} - {t['Name']} ({t['Status']})"):
                         st.write(f"**Due Date:** {t['Due']}")
                         st.write(f"**Current Notes:**\n{t['Comments'] if pd.notna(t['Comments']) and t['Comments'].strip() and t['Comments'] != 'nan' else 'No notes provided.'}")
                         
+                        # Existing progress update form
                         with st.form(f"update_active_{t['Type']}_{t['Idx']}"):
                             new_status = st.selectbox("Update Status", ["Pending", "In Progress", "Completed"], index=["Pending", "In Progress", "Completed"].index(t['Status']))
                             added_comment = st.text_area("Add a progress update / final notes:")
@@ -277,6 +284,36 @@ else:
                                     
                                 st.session_state.inline_msg = {"loc": "desk_active", "msg": f"✅ Progress saved for '{t['Name']}'! Status: {new_status}"}
                                 st.rerun()
+
+                        # NEW FEATURE: Add Subtask (Only for Main Tasks)
+                        if t['Type'] == "Main":
+                            st.markdown("---")
+                            st.markdown("##### ➕ Create Subtask")
+                            with st.form(f"quick_add_sub_{t['Idx']}"):
+                                s_name = st.text_input("Subtask Name")
+                                c1, c2 = st.columns(2)
+                                default_user_idx = user_list.index(st.session_state.current_user) if st.session_state.current_user in user_list else 0
+                                s_assignee = c1.selectbox("Assign To", user_list, index=default_user_idx)
+                                s_due = c2.date_input("Due Date")
+                                
+                                if st.form_submit_button("Create Subtask"):
+                                    if s_name:
+                                        new_sub = pd.DataFrame([{
+                                            "Project": t['Project'], 
+                                            "Parent Task": t['Name'], 
+                                            "Subtask Name": s_name, 
+                                            "Assignee": s_assignee, 
+                                            "Status": "Pending", 
+                                            "Date Added": datetime.now().strftime("%Y-%m-%d"), 
+                                            "Due Date": str(s_due), 
+                                            "Comments": ""
+                                        }])
+                                        st.session_state.subtask_db = pd.concat([st.session_state.subtask_db, new_sub], ignore_index=True)
+                                        save_data(st.session_state.subtask_db, SUBTASK_FILE)
+                                        st.session_state.inline_msg = {"loc": "desk_active", "msg": f"✅ Subtask '{s_name}' created under '{t['Name']}'!"}
+                                        st.rerun()
+                                    else:
+                                        st.error("Please provide a subtask name.")
         tab_index += 1
 
         # --- TAB 2: INTERNAL MAIL ---
