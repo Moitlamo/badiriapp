@@ -6,7 +6,7 @@ import io
 import requests
 import base64
 import json
-import sqlite3  # NEW: The native database engine!
+import sqlite3
 
 # Try to load the PowerPoint library securely
 try:
@@ -26,7 +26,7 @@ except ImportError:
 # --- 1. APP CONFIGURATION ---
 st.set_page_config(page_title="Marumo Technologies - Badiri App", layout="wide")
 
-DB_NAME = "badiri_backend.db" # The new secure SQL database file
+DB_NAME = "badiri_backend.db"
 
 # --- 2. POWERPOINT GENERATOR ---
 def create_ppt(df, sub_df):
@@ -52,10 +52,8 @@ def create_ppt(df, sub_df):
     ppt_stream.seek(0)
     return ppt_stream
 
-# --- 3. DATABASE ENGINE (SQLite Upgrade) ---
-
+# --- 3. DATABASE ENGINE ---
 def init_db_migration():
-    """Automatically migrates old CSV files to the new SQL database so no data is lost."""
     conn = sqlite3.connect(DB_NAME)
     csv_mapping = {
         "tasks": "badiri_db.csv",
@@ -68,37 +66,26 @@ def init_db_migration():
     for table_name, csv_file in csv_mapping.items():
         if os.path.exists(csv_file):
             try:
-                # Check if the SQL table already exists and has data
                 check = pd.read_sql(f"SELECT count(*) FROM {table_name}", conn)
-                if check.iloc[0,0] > 0:
-                    continue # Database already populated, skip migration
-            except:
-                pass # Table doesn't exist yet, proceed to migrate
+                if check.iloc[0,0] > 0: continue 
+            except: pass 
             
-            # Read old CSV and push to secure database
             df = pd.read_csv(csv_file)
             df.to_sql(table_name, conn, if_exists="replace", index=False)
-            
-            # Rename old CSV to backup so it doesn't overwrite again
             os.rename(csv_file, f"{csv_file}.backup")
-            
     conn.close()
 
-# Run the migration automatically on startup
 init_db_migration()
 
 def load_data(table_name, default_columns):
-    """Loads data securely from the SQLite database."""
     conn = sqlite3.connect(DB_NAME)
     try:
         df = pd.read_sql(f"SELECT * FROM {table_name}", conn)
     except:
-        # If table doesn't exist at all yet, create an empty one
         df = pd.DataFrame(columns=default_columns)
         df.to_sql(table_name, conn, if_exists="replace", index=False)
     conn.close()
     
-    # Ensure all required columns exist (for future-proofing updates)
     for col in default_columns:
         if col not in df.columns:
             if col == "Status": df[col] = "Active" if table_name == "users" else "Pending"
@@ -109,7 +96,6 @@ def load_data(table_name, default_columns):
     return df
 
 def save_data(df, table_name):
-    """Saves data securely to the SQLite database."""
     conn = sqlite3.connect(DB_NAME)
     df.to_sql(table_name, conn, if_exists="replace", index=False)
     conn.close()
@@ -119,7 +105,6 @@ def show_inline_msg(location):
         st.success(st.session_state.inline_msg["msg"])
         st.session_state.inline_msg = {} 
 
-# Initialize Secure Databases & Session States
 if "task_db" not in st.session_state: st.session_state.task_db = load_data("tasks", ["Project", "Task Name", "Assignee", "Status", "Date Added", "Due Date", "Comments"])
 if "subtask_db" not in st.session_state: st.session_state.subtask_db = load_data("subtasks", ["Project", "Parent Task", "Subtask Name", "Assignee", "Status", "Date Added", "Due Date", "Comments"])
 if "user_db" not in st.session_state: st.session_state.user_db = load_data("users", ["Full Name", "Email", "Phone Number", "Status", "Role", "Password"])
@@ -217,22 +202,10 @@ else:
     # --- TAB 1: MY DESK ---
     with tab_list[tab_index]:
         st.subheader(f"👋 Welcome, {st.session_state.current_user}!")
+        st.write("") # small spacing
         
         my_main = df[(df["Assignee"] == st.session_state.current_user) & (df["Status"] != "Completed")]
         my_sub = sub_df_all[(sub_df_all["Assignee"] == st.session_state.current_user) & (sub_df_all["Status"] != "Completed")]
-        
-        if not my_main.empty: 
-            st.markdown("**📌 Your Pending Main Tasks:**")
-            st.dataframe(my_main[["Project", "Task Name", "Status", "Due Date"]], hide_index=True, use_container_width=True)
-        if not my_sub.empty: 
-            st.markdown("**📎 Your Pending Subtasks:**")
-            st.dataframe(my_sub[["Project", "Parent Task", "Subtask Name", "Status", "Due Date"]], hide_index=True, use_container_width=True)
-
-        st.divider()
-        
-        st.markdown("### ⚡ Inbox: Action Required")
-        show_inline_msg("desk_inbox") 
-        st.caption("New assignments. Open to Accept the work or Revert to someone else.")
         
         inbox_tasks = []
         active_tasks = []
@@ -249,6 +222,11 @@ else:
             if is_unacknowledged: inbox_tasks.append(t_data)
             else: active_tasks.append(t_data)
 
+        # --- 1. INBOX SECTION ---
+        st.markdown("### ⚡ Inbox: Action Required")
+        show_inline_msg("desk_inbox") 
+        st.caption("These are new assignments. Open them to Accept the work or Revert to someone else.")
+        
         if len(inbox_tasks) == 0:
             st.info("✅ Inbox Zero! You have no new tasks waiting.")
         else:
@@ -296,9 +274,10 @@ else:
 
         st.divider()
         
-        st.markdown("### 🏃‍♂️ My Active Workspace")
+        # --- 2. ACTIVE PENDING TASKS ---
+        st.markdown("### 📌 My Pending Tasks")
         show_inline_msg("desk_active") 
-        st.caption("Click on any task below to log your progress, add comments, or complete it.")
+        st.caption("Click on any task below to log your progress, add subtasks, or mark it as completed.")
         
         if len(active_tasks) == 0:
             st.info("You don't have any active tasks currently in progress.")
@@ -545,7 +524,6 @@ else:
                 if HAS_PPTX:
                     st.download_button("📊 Download PowerPoint", data=create_ppt(df, sub_df_all), file_name=f"Report_{datetime.now().strftime('%Y%m%d')}.pptx")
             with ex2:
-                # Raw CSV export still works fine by reading from the active dataframes!
                 st.download_button("📈 Download CSV Export", data=df.to_csv(index=False).encode('utf-8'), file_name=f"Data_{datetime.now().strftime('%Y%m%d')}.csv")
 
     # --- TAB 5: TEAM COMMUNICATIONS (MAIL + CHAT) ---
