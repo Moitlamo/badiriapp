@@ -187,23 +187,26 @@ else:
 
     st.title("🛠️ Project Management Dashboard")
     show_inline_msg("top") 
+    
+    # --- STICKY NAVIGATION MENU ---
+    nav_options = ["🏠 My Desk"]
+    if st.session_state.user_role != "Viewer Only": nav_options.append("📁 Project Workspace")
+    nav_options.append("📅 Project Calendar")
+    nav_options.append("📊 Reports")
+    nav_options.append("💬 Team Communications")
+    if st.session_state.user_role != "Viewer Only": nav_options.append("🧠 AI Project Manager")
+    if st.session_state.is_admin: nav_options.append("🛡️ Admin Console")
+    
+    active_tab = st.radio("Main Menu", nav_options, horizontal=True, label_visibility="collapsed", key="main_nav")
     st.divider()
 
-    tabs = ["🏠 My Desk"]
-    if st.session_state.user_role != "Viewer Only": tabs.append("📋 Workspace")
-    tabs.append("📅 Project Calendar")
-    tabs.append("📊 Reports")
-    tabs.append("💬 Team Communications")
-    if st.session_state.user_role != "Viewer Only": tabs.append("🧠 AI Project Manager")
-    if st.session_state.is_admin: tabs.append("🛡️ Admin")
-    
-    tab_list = st.tabs(tabs)
-    tab_index = 0
     df = st.session_state.task_db
     sub_df_all = st.session_state.subtask_db
 
+    # ==========================================
     # --- TAB 1: MY DESK ---
-    with tab_list[tab_index]:
+    # ==========================================
+    if active_tab == "🏠 My Desk":
         st.subheader(f"👋 Welcome, {st.session_state.current_user}!")
         st.write("") 
         
@@ -225,7 +228,7 @@ else:
             if is_unacknowledged: inbox_tasks.append(t_data)
             else: active_tasks.append(t_data)
 
-        # --- 1. INBOX SECTION ---
+        # --- INBOX SECTION ---
         st.markdown("### ⚡ Inbox: Action Required")
         show_inline_msg("desk_inbox") 
         st.caption("These are new assignments. Open them to Accept the work or Revert to someone else.")
@@ -277,7 +280,7 @@ else:
 
         st.divider()
         
-        # --- 2. ACTIVE PENDING TASKS ---
+        # --- ACTIVE PENDING TASKS ---
         st.markdown("### 📌 My Pending Tasks")
         show_inline_msg("desk_active") 
         st.caption("Click on any task below to log your progress, add receipts/files, or complete it.")
@@ -291,7 +294,6 @@ else:
                     st.write(f"**Due Date:** {t['Due']}")
                     st.write(f"**Current Notes:**\n{t['Comments'] if pd.notna(t['Comments']) and t['Comments'].strip() and t['Comments'] != 'nan' else 'No notes provided.'}")
                     
-                    # Display existing attachments
                     if pd.notna(t['Attachments']) and t['Attachments'] != "" and t['Attachments'] != "nan":
                         st.markdown("**📎 Task Attachments:**")
                         att_files = t['Attachments'].split('|')
@@ -365,138 +367,135 @@ else:
                                 else:
                                     st.error("Please provide a subtask name.")
 
+    # ==========================================
     # --- TAB 2: WORKSPACE ---
-    if st.session_state.user_role != "Viewer Only":
-        tab_index += 1
-        with tab_list[tab_index]:
-            st.subheader("📁 Project Workspace")
+    # ==========================================
+    elif active_tab == "📁 Project Workspace":
+        st.subheader("📁 Project Workspace")
+        
+        existing_projects = df["Project"].unique().tolist() if not df.empty else []
+        c1, c2 = st.columns([1, 2])
+        project_selection = c1.selectbox("Select Workspace", ["-- Choose a Project --", "✨ Create New Project"] + existing_projects, key="ws_proj_sel")
+        active_project = c2.text_input("Enter New Project Name", placeholder="e.g. Leririma Games 2026") if project_selection == "✨ Create New Project" else (project_selection if project_selection != "-- Choose a Project --" else None)
+
+        if active_project:
+            st.divider()
+            st.markdown(f"### 📂 Project: {active_project}")
             
-            existing_projects = df["Project"].unique().tolist() if not df.empty else []
-            c1, c2 = st.columns([1, 2])
-            project_selection = c1.selectbox("Select Workspace", ["-- Choose a Project --", "✨ Create New Project"] + existing_projects)
-            active_project = c2.text_input("Enter New Project Name", placeholder="e.g. Leririma Games 2026") if project_selection == "✨ Create New Project" else (project_selection if project_selection != "-- Choose a Project --" else None)
-
-            if active_project:
-                st.divider()
-                st.markdown(f"### 📂 Project: {active_project}")
-                
-                proj_df = df[df["Project"] == active_project]
-                proj_sub_df = sub_df_all[sub_df_all["Project"] == active_project]
-                
-                # Top Metrics Dashboard
-                m1, m2, m3 = st.columns(3)
-                tot_tasks = len(proj_df)
-                comp_tasks = len(proj_df[proj_df["Status"] == "Completed"])
-                pct = (comp_tasks / tot_tasks) if tot_tasks > 0 else 0.0
-                
-                m1.metric("Total Main Tasks", tot_tasks)
-                m2.metric("Subtasks Attached", len(proj_sub_df))
-                m3.metric("Overall Completion", f"{int(pct*100)}%")
-                st.progress(pct)
-                st.write("")
-                
-                # Split operations into Sub-Tabs for a cleaner UI
-                pw_tabs = st.tabs(["🗂️ Project Board", "➕ Add New Task", "⚙️ Edit Tasks & Subtasks"])
-                
-                # Sub-Tab 1: Project Board (Hierarchical View)
-                with pw_tabs[0]:
-                    if proj_df.empty:
-                        st.info("No tasks in this project yet. Go to 'Add New Task' to get started.")
-                    else:
-                        for real_idx, m_row in proj_df.iterrows():
-                            # Draw a container card for each Main Task
-                            with st.container(border=True):
-                                icon = "✅" if m_row['Status'] == "Completed" else "🔹"
-                                st.markdown(f"#### {icon} {m_row['Task Name']}")
-                                st.caption(f"**Assignee:** {m_row['Assignee']} | **Status:** {m_row['Status']} | **Due:** {m_row['Due Date']}")
+            proj_df = df[df["Project"] == active_project]
+            proj_sub_df = sub_df_all[sub_df_all["Project"] == active_project]
+            
+            m1, m2, m3 = st.columns(3)
+            tot_tasks = len(proj_df)
+            comp_tasks = len(proj_df[proj_df["Status"] == "Completed"])
+            pct = (comp_tasks / tot_tasks) if tot_tasks > 0 else 0.0
+            
+            m1.metric("Total Main Tasks", tot_tasks)
+            m2.metric("Subtasks Attached", len(proj_sub_df))
+            m3.metric("Overall Completion", f"{int(pct*100)}%")
+            st.progress(pct)
+            st.write("")
+            
+            # STICKY TABS for Workspace Sub-Menu
+            pw_tab = st.radio("Workspace Operations", ["🗂️ Project Board", "➕ Add New Task", "⚙️ Edit Tasks & Subtasks"], horizontal=True, label_visibility="collapsed", key="pw_nav")
+            st.write("")
+            
+            if pw_tab == "🗂️ Project Board":
+                if proj_df.empty:
+                    st.info("No tasks in this project yet. Go to 'Add New Task' to get started.")
+                else:
+                    for real_idx, m_row in proj_df.iterrows():
+                        with st.container(border=True):
+                            icon = "✅" if m_row['Status'] == "Completed" else "🔹"
+                            st.markdown(f"#### {icon} {m_row['Task Name']}")
+                            st.caption(f"**Assignee:** {m_row['Assignee']} | **Status:** {m_row['Status']} | **Due:** {m_row['Due Date']}")
+                            
+                            if pd.notna(m_row['Comments']) and str(m_row['Comments']).strip() != "nan" and str(m_row['Comments']).strip() != "":
+                                st.write(f"**Notes:** {m_row['Comments']}")
                                 
-                                if pd.notna(m_row['Comments']) and str(m_row['Comments']).strip() != "nan" and str(m_row['Comments']).strip() != "":
-                                    st.write(f"**Notes:** {m_row['Comments']}")
-                                    
-                                m_subs = proj_sub_df[proj_sub_df["Parent Task"] == m_row["Task Name"]]
-                                if not m_subs.empty:
-                                    st.markdown("**Subtasks:**")
-                                    st.dataframe(m_subs[["Subtask Name", "Assignee", "Status", "Due Date"]], hide_index=True, use_container_width=True)
-                
-                # Sub-Tab 2: Add New Task
-                with pw_tabs[1]:
-                    st.markdown("#### Create a New Main Task")
-                    show_inline_msg("ws_add_main") 
-                    with st.form("workspace_add_task_form", clear_on_submit=True):
-                        t_name = st.text_input("Task Name")
-                        t_assignee = st.selectbox("Assign To", user_list)
-                        t_status = st.selectbox("Status", ["Pending", "In Progress", "Completed"])
-                        t_due = st.date_input("Due Date")
-                        t_comments = st.text_area("Comments")
-                        if st.form_submit_button("Add Task") and t_name:
-                            new_task = pd.DataFrame([{"Project": active_project, "Task Name": t_name, "Assignee": t_assignee, "Status": t_status, "Date Added": datetime.now().strftime("%Y-%m-%d"), "Due Date": str(t_due), "Comments": t_comments, "Attachments": ""}])
-                            st.session_state.task_db = pd.concat([st.session_state.task_db, new_task], ignore_index=True)
-                            save_data(st.session_state.task_db, "tasks")
-                            st.session_state.inline_msg = {"loc": "ws_add_main", "msg": f"✅ New task '{t_name}' added to {active_project}!"}
-                            st.rerun()
+                            m_subs = proj_sub_df[proj_sub_df["Parent Task"] == m_row["Task Name"]]
+                            if not m_subs.empty:
+                                st.markdown("**Subtasks:**")
+                                st.dataframe(m_subs[["Subtask Name", "Assignee", "Status", "Due Date"]], hide_index=True, use_container_width=True)
+            
+            elif pw_tab == "➕ Add New Task":
+                st.markdown("#### Create a New Main Task")
+                show_inline_msg("ws_add_main") 
+                with st.form("workspace_add_task_form", clear_on_submit=True):
+                    t_name = st.text_input("Task Name")
+                    t_assignee = st.selectbox("Assign To", user_list)
+                    t_status = st.selectbox("Status", ["Pending", "In Progress", "Completed"])
+                    t_due = st.date_input("Due Date")
+                    t_comments = st.text_area("Comments")
+                    if st.form_submit_button("Add Task") and t_name:
+                        new_task = pd.DataFrame([{"Project": active_project, "Task Name": t_name, "Assignee": t_assignee, "Status": t_status, "Date Added": datetime.now().strftime("%Y-%m-%d"), "Due Date": str(t_due), "Comments": t_comments, "Attachments": ""}])
+                        st.session_state.task_db = pd.concat([st.session_state.task_db, new_task], ignore_index=True)
+                        save_data(st.session_state.task_db, "tasks")
+                        st.session_state.inline_msg = {"loc": "ws_add_main", "msg": f"✅ New task '{t_name}' added to {active_project}!"}
+                        st.rerun()
 
-                # Sub-Tab 3: Edit Existing Tasks
-                with pw_tabs[2]:
-                    update_col1, update_col2 = st.columns(2)
-                    
-                    with update_col1:
-                        st.markdown("**✏️ Edit Main Task**")
-                        show_inline_msg("ws_upd_main")
-                        if not proj_df.empty:
-                            task_dict = {idx: row["Task Name"] for idx, row in proj_df.iterrows()}
-                            selected_idx = st.selectbox("Select Task to Edit", options=list(task_dict.keys()), format_func=lambda x: task_dict[x])
-                            if selected_idx is not None:
-                                curr_assig = df.at[selected_idx, "Assignee"]
-                                with st.form("workspace_update_form"):
-                                    new_assignee = st.selectbox("Reassign To", user_list, index=user_list.index(curr_assig) if curr_assig in user_list else 0)
-                                    new_status = st.selectbox("Status", ["Pending", "In Progress", "Completed"], index=["Pending", "In Progress", "Completed"].index(df.at[selected_idx, "Status"]))
-                                    new_comments = st.text_area("Comments", value=str(df.at[selected_idx, "Comments"]))
-                                    if st.form_submit_button("Save Updates"):
-                                        if new_assignee != curr_assig: 
-                                            new_comments += f"\n[Forwarded to {new_assignee}]"
-                                        st.session_state.task_db.at[selected_idx, "Assignee"] = new_assignee
-                                        st.session_state.task_db.at[selected_idx, "Status"] = new_status
-                                        st.session_state.task_db.at[selected_idx, "Comments"] = new_comments
-                                        save_data(st.session_state.task_db, "tasks")
-                                        st.session_state.inline_msg = {"loc": "ws_upd_main", "msg": "✅ Task successfully updated!"}
+            elif pw_tab == "⚙️ Edit Tasks & Subtasks":
+                update_col1, update_col2 = st.columns(2)
+                
+                with update_col1:
+                    st.markdown("**✏️ Edit Main Task**")
+                    show_inline_msg("ws_upd_main")
+                    if not proj_df.empty:
+                        task_dict = {idx: row["Task Name"] for idx, row in proj_df.iterrows()}
+                        selected_idx = st.selectbox("Select Task to Edit", options=list(task_dict.keys()), format_func=lambda x: task_dict[x])
+                        if selected_idx is not None:
+                            curr_assig = df.at[selected_idx, "Assignee"]
+                            with st.form("workspace_update_form"):
+                                new_assignee = st.selectbox("Reassign To", user_list, index=user_list.index(curr_assig) if curr_assig in user_list else 0)
+                                new_status = st.selectbox("Status", ["Pending", "In Progress", "Completed"], index=["Pending", "In Progress", "Completed"].index(df.at[selected_idx, "Status"]))
+                                new_comments = st.text_area("Comments", value=str(df.at[selected_idx, "Comments"]))
+                                if st.form_submit_button("Save Updates"):
+                                    if new_assignee != curr_assig: 
+                                        new_comments += f"\n[Forwarded to {new_assignee}]"
+                                    st.session_state.task_db.at[selected_idx, "Assignee"] = new_assignee
+                                    st.session_state.task_db.at[selected_idx, "Status"] = new_status
+                                    st.session_state.task_db.at[selected_idx, "Comments"] = new_comments
+                                    save_data(st.session_state.task_db, "tasks")
+                                    st.session_state.inline_msg = {"loc": "ws_upd_main", "msg": "✅ Task successfully updated!"}
+                                    st.rerun()
+                                    
+                with update_col2:
+                    st.markdown("**⚙️ Manage Subtasks**")
+                    show_inline_msg("ws_sub_mng")
+                    if not proj_df.empty:
+                        parent_task = st.selectbox("Select Parent Task:", ["-- Select --"] + proj_df["Task Name"].tolist())
+                        if parent_task != "-- Select --":
+                            with st.expander("➕ Add Subtask", expanded=False):
+                                with st.form("add_sub_form", clear_on_submit=True):
+                                    s_name = st.text_input("Subtask Name")
+                                    s_assignee = st.selectbox("Assign To", user_list)
+                                    s_due = st.date_input("Due Date")
+                                    if st.form_submit_button("Create Subtask") and s_name:
+                                        new_sub = pd.DataFrame([{"Project": active_project, "Parent Task": parent_task, "Subtask Name": s_name, "Assignee": s_assignee, "Status": "Pending", "Date Added": datetime.now().strftime("%Y-%m-%d"), "Due Date": str(s_due), "Comments": "", "Attachments": ""}])
+                                        st.session_state.subtask_db = pd.concat([st.session_state.subtask_db, new_sub], ignore_index=True)
+                                        save_data(st.session_state.subtask_db, "subtasks")
+                                        st.session_state.inline_msg = {"loc": "ws_sub_mng", "msg": f"✅ New subtask '{s_name}' added!"}
                                         st.rerun()
                                         
-                    with update_col2:
-                        st.markdown("**⚙️ Manage Subtasks**")
-                        show_inline_msg("ws_sub_mng")
-                        if not proj_df.empty:
-                            parent_task = st.selectbox("Select Parent Task:", ["-- Select --"] + proj_df["Task Name"].tolist())
-                            if parent_task != "-- Select --":
-                                with st.expander("➕ Add Subtask", expanded=False):
-                                    with st.form("add_sub_form", clear_on_submit=True):
-                                        s_name = st.text_input("Subtask Name")
-                                        s_assignee = st.selectbox("Assign To", user_list)
-                                        s_due = st.date_input("Due Date")
-                                        if st.form_submit_button("Create Subtask") and s_name:
-                                            new_sub = pd.DataFrame([{"Project": active_project, "Parent Task": parent_task, "Subtask Name": s_name, "Assignee": s_assignee, "Status": "Pending", "Date Added": datetime.now().strftime("%Y-%m-%d"), "Due Date": str(s_due), "Comments": "", "Attachments": ""}])
-                                            st.session_state.subtask_db = pd.concat([st.session_state.subtask_db, new_sub], ignore_index=True)
-                                            save_data(st.session_state.subtask_db, "subtasks")
-                                            st.session_state.inline_msg = {"loc": "ws_sub_mng", "msg": f"✅ New subtask '{s_name}' added!"}
-                                            st.rerun()
-                                            
-                                active_subtasks = sub_df_all[(sub_df_all["Project"] == active_project) & (sub_df_all["Parent Task"] == parent_task)]
-                                if not active_subtasks.empty:
-                                    with st.expander("✏️ Edit Subtask", expanded=False):
-                                        sub_dict = {idx: row["Subtask Name"] for idx, row in active_subtasks.iterrows()}
-                                        sub_idx = st.selectbox("Select Subtask", options=list(sub_dict.keys()), format_func=lambda x: sub_dict[x])
-                                        if sub_idx is not None:
-                                            with st.form("update_sub_form"):
-                                                s_curr_status = sub_df_all.at[sub_idx, "Status"]
-                                                new_s_status = st.selectbox("Status", ["Pending", "In Progress", "Completed"], index=["Pending", "In Progress", "Completed"].index(s_curr_status))
-                                                if st.form_submit_button("Save Subtask Updates"):
-                                                    st.session_state.subtask_db.at[sub_idx, "Status"] = new_s_status
-                                                    save_data(st.session_state.subtask_db, "subtasks")
-                                                    st.session_state.inline_msg = {"loc": "ws_sub_mng", "msg": "✅ Subtask successfully updated!"}
-                                                    st.rerun()
+                            active_subtasks = sub_df_all[(sub_df_all["Project"] == active_project) & (sub_df_all["Parent Task"] == parent_task)]
+                            if not active_subtasks.empty:
+                                with st.expander("✏️ Edit Subtask", expanded=False):
+                                    sub_dict = {idx: row["Subtask Name"] for idx, row in active_subtasks.iterrows()}
+                                    sub_idx = st.selectbox("Select Subtask", options=list(sub_dict.keys()), format_func=lambda x: sub_dict[x])
+                                    if sub_idx is not None:
+                                        with st.form("update_sub_form"):
+                                            s_curr_status = sub_df_all.at[sub_idx, "Status"]
+                                            new_s_status = st.selectbox("Status", ["Pending", "In Progress", "Completed"], index=["Pending", "In Progress", "Completed"].index(s_curr_status))
+                                            if st.form_submit_button("Save Subtask Updates"):
+                                                st.session_state.subtask_db.at[sub_idx, "Status"] = new_s_status
+                                                save_data(st.session_state.subtask_db, "subtasks")
+                                                st.session_state.inline_msg = {"loc": "ws_sub_mng", "msg": "✅ Subtask successfully updated!"}
+                                                st.rerun()
 
+    # ==========================================
     # --- TAB 3: PROJECT CALENDAR ---
-    tab_index += 1
-    with tab_list[tab_index]:
+    # ==========================================
+    elif active_tab == "📅 Project Calendar":
         st.subheader("📅 Project Calendar & Visual Timeline")
         st.markdown("Track exactly when tasks begin and when they are due.")
         
@@ -539,9 +538,10 @@ else:
                 else:
                     st.dataframe(upcoming[["Project", "Task Display", "Assignee", "Status", "Due Date"]].rename(columns={"Task Display": "Task"}), hide_index=True, use_container_width=True)
 
+    # ==========================================
     # --- TAB 4: REPORTS ---
-    tab_index += 1
-    with tab_list[tab_index]:
+    # ==========================================
+    elif active_tab == "📊 Reports":
         if df.empty:
             st.info("No tasks to report on.")
         else:
@@ -592,14 +592,18 @@ else:
             with ex2:
                 st.download_button("📈 Download CSV Export", data=df.to_csv(index=False).encode('utf-8'), file_name=f"Data_{datetime.now().strftime('%Y%m%d')}.csv")
 
-    # --- TAB 5: TEAM COMMUNICATIONS (MAIL + CHAT) ---
-    tab_index += 1
-    with tab_list[tab_index]:
+    # ==========================================
+    # --- TAB 5: TEAM COMMUNICATIONS ---
+    # ==========================================
+    elif active_tab == "💬 Team Communications":
         st.subheader("💬 Team Communications")
         st.markdown("Chat with your team in real-time or send formal, secure internal mail.")
-        comm_tabs = st.tabs(["💬 Global Team Chat", "📥 Mail Inbox", "📤 Compose Mail"])
         
-        with comm_tabs[0]:
+        # Sticky navigation for Comm Tabs
+        comm_tab = st.radio("Communication Actions", ["💬 Global Team Chat", "📥 Mail Inbox", "📤 Compose Mail"], horizontal=True, label_visibility="collapsed", key="comm_nav")
+        st.write("")
+        
+        if comm_tab == "💬 Global Team Chat":
             st.session_state.chat_db = load_data("chat", ["Timestamp", "User", "Message"])
             chat_container = st.container(height=400)
             with chat_container:
@@ -622,7 +626,7 @@ else:
                     st.rerun()
                 if c2.form_submit_button("🔄 Refresh Chat"): st.rerun()
 
-        with comm_tabs[1]:
+        elif comm_tab == "📥 Mail Inbox":
             show_inline_msg("mail_inbox")
             my_mail = st.session_state.mail_db[st.session_state.mail_db["To"] == st.session_state.current_user]
             if my_mail.empty:
@@ -639,7 +643,7 @@ else:
                                 st.session_state.inline_msg = {"loc": "mail_inbox", "msg": "✅ Mail marked as read."}
                                 st.rerun()
 
-        with comm_tabs[2]:
+        elif comm_tab == "📤 Compose Mail":
             show_inline_msg("mail_compose") 
             with st.form("compose_mail_form", clear_on_submit=True):
                 to_user = st.selectbox("Send To:", user_list)
@@ -662,129 +666,129 @@ else:
                     else:
                         st.error("Please fill in subject and message.")
 
+    # ==========================================
     # --- TAB 6: AI PROJECT MANAGER ---
-    if st.session_state.user_role != "Viewer Only":
-        tab_index += 1
-        with tab_list[tab_index]:
-            st.subheader("🧠 Your AI Project Manager")
-            st.markdown("👋 **Hello! I am your Badiri AI Assistant.**\n\nI can help you automate your workspace. Generate a whole project from a single sentence, scan meeting minutes, or mine the Team Chat!")
-            
-            gemini_key = st.text_input("🔑 Gemini API Key", type="password")
-            st.divider()
-            
-            # --- AUTO-PLANNER ---
-            st.markdown("#### 🪄 Auto-Generate Project Plan")
-            st.caption("Tell me what you are trying to do, and I will build a full step-by-step project plan.")
-            
-            with st.form("ai_planner_form"):
-                plan_prompt = st.text_input("Describe the project:", placeholder="e.g., Organize a constituency cleanup campaign for 500 people...")
-                if st.form_submit_button("🏗️ Build Project Plan"):
-                    if gemini_key and plan_prompt:
-                        with st.spinner("Drafting tasks..."):
-                            full_prompt = f"You are an expert Project Manager. I need to plan this: '{plan_prompt}'. Create a comprehensive project plan. Return strictly a JSON list of objects with these keys: 'Project' (a short unifying project name), 'Task Name', 'Assignee' (always output 'Unassigned'). Do not include markdown or explanations."
-                            res = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}", json={"contents": [{"parts": [{"text": full_prompt}]}]}).json()
-                            if 'candidates' in res: 
-                                st.session_state.plan_ai_suggestions = json.loads(res['candidates'][0]['content']['parts'][0]['text'].replace("```json","").replace("```","").strip())
-            
-            if st.session_state.plan_ai_suggestions and st.session_state.is_admin:
-                show_inline_msg("ai_plan") 
-                with st.form("plan_approval"):
-                    st.write("**Select tasks to import into Workspace:**")
-                    plan_sels = [st.checkbox(f"{it['Task Name']}", value=True, key=f"plan_c_{i}") for i, it in enumerate(st.session_state.plan_ai_suggestions)]
-                    if st.form_submit_button("✅ Approve Selected Plan"):
-                        added = 0
-                        for i, sel in enumerate(plan_sels):
-                            if sel: 
-                                st.session_state.task_db = pd.concat([st.session_state.task_db, pd.DataFrame([{"Project": st.session_state.plan_ai_suggestions[i]['Project'], "Task Name": st.session_state.plan_ai_suggestions[i]['Task Name'], "Assignee": st.session_state.plan_ai_suggestions[i]['Assignee'], "Status": "Pending", "Date Added": datetime.now().strftime("%Y-%m-%d"), "Due Date": datetime.now().strftime("%Y-%m-%d"), "Comments": "AI Auto-Generated Plan", "Attachments": ""}])], ignore_index=True)
-                                added += 1
-                        save_data(st.session_state.task_db, "tasks")
-                        st.session_state.plan_ai_suggestions = []
-                        st.session_state.inline_msg = {"loc": "ai_plan", "msg": f"✅ {added} tasks imported from the AI Planner!"}
-                        st.rerun()
+    # ==========================================
+    elif active_tab == "🧠 AI Project Manager":
+        st.subheader("🧠 Your AI Project Manager")
+        st.markdown("👋 **Hello! I am your Badiri AI Assistant.**\n\nI can help you automate your workspace. Generate a whole project from a single sentence, scan meeting minutes, or mine the Team Chat!")
+        
+        gemini_key = st.text_input("🔑 Gemini API Key", type="password")
+        st.divider()
+        
+        # --- AUTO-PLANNER ---
+        st.markdown("#### 🪄 Auto-Generate Project Plan")
+        st.caption("Tell me what you are trying to do, and I will build a full step-by-step project plan.")
+        
+        with st.form("ai_planner_form"):
+            plan_prompt = st.text_input("Describe the project:", placeholder="e.g., Organize a constituency cleanup campaign for 500 people...")
+            if st.form_submit_button("🏗️ Build Project Plan"):
+                if gemini_key and plan_prompt:
+                    with st.spinner("Drafting tasks..."):
+                        full_prompt = f"You are an expert Project Manager. I need to plan this: '{plan_prompt}'. Create a comprehensive project plan. Return strictly a JSON list of objects with these keys: 'Project' (a short unifying project name), 'Task Name', 'Assignee' (always output 'Unassigned'). Do not include markdown or explanations."
+                        res = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}", json={"contents": [{"parts": [{"text": full_prompt}]}]}).json()
+                        if 'candidates' in res: 
+                            st.session_state.plan_ai_suggestions = json.loads(res['candidates'][0]['content']['parts'][0]['text'].replace("```json","").replace("```","").strip())
+        
+        if st.session_state.plan_ai_suggestions and st.session_state.is_admin:
+            show_inline_msg("ai_plan") 
+            with st.form("plan_approval"):
+                st.write("**Select tasks to import into Workspace:**")
+                plan_sels = [st.checkbox(f"{it['Task Name']}", value=True, key=f"plan_c_{i}") for i, it in enumerate(st.session_state.plan_ai_suggestions)]
+                if st.form_submit_button("✅ Approve Selected Plan"):
+                    added = 0
+                    for i, sel in enumerate(plan_sels):
+                        if sel: 
+                            st.session_state.task_db = pd.concat([st.session_state.task_db, pd.DataFrame([{"Project": st.session_state.plan_ai_suggestions[i]['Project'], "Task Name": st.session_state.plan_ai_suggestions[i]['Task Name'], "Assignee": st.session_state.plan_ai_suggestions[i]['Assignee'], "Status": "Pending", "Date Added": datetime.now().strftime("%Y-%m-%d"), "Due Date": datetime.now().strftime("%Y-%m-%d"), "Comments": "AI Auto-Generated Plan", "Attachments": ""}])], ignore_index=True)
+                            added += 1
+                    save_data(st.session_state.task_db, "tasks")
+                    st.session_state.plan_ai_suggestions = []
+                    st.session_state.inline_msg = {"loc": "ai_plan", "msg": f"✅ {added} tasks imported from the AI Planner!"}
+                    st.rerun()
 
-            st.divider()
+        st.divider()
 
-            # --- EXTRACT FROM IMAGE ---
-            st.markdown("#### 📷 Extract Tasks from Minutes (Image)")
-            img_file = st.file_uploader("Upload Minutes", type=["jpg", "png"])
-            if st.button("🔍 Analyze Minutes"):
-                if gemini_key and img_file:
-                    with st.spinner("Analyzing document..."):
-                        b64 = base64.b64encode(img_file.read()).decode('utf-8')
-                        prompt = f"Extract tasks as JSON list with keys: Project, Task Name, Assignee. Use only these names: {user_list}"
-                        res = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}", json={"contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "image/jpeg", "data": b64}}]}]}).json()
-                        if 'candidates' in res: st.session_state.ai_suggestions = json.loads(res['candidates'][0]['content']['parts'][0]['text'].replace("```json","").replace("```","").strip())
-            
-            if st.session_state.ai_suggestions and st.session_state.is_admin:
-                show_inline_msg("ai_img") 
-                with st.form("img_approval"):
-                    st.write("**Select items to import into Workspace:**")
-                    img_sels = [st.checkbox(f"{it['Project']} | {it['Task Name']} ({it['Assignee']})", value=True, key=f"img_c_{i}") for i, it in enumerate(st.session_state.ai_suggestions)]
-                    if st.form_submit_button("✅ Approve Selected"):
-                        added = 0
-                        for i, sel in enumerate(img_sels):
-                            if sel: 
-                                st.session_state.task_db = pd.concat([st.session_state.task_db, pd.DataFrame([{"Project": st.session_state.ai_suggestions[i]['Project'], "Task Name": st.session_state.ai_suggestions[i]['Task Name'], "Assignee": st.session_state.ai_suggestions[i]['Assignee'], "Status": "Pending", "Date Added": datetime.now().strftime("%Y-%m-%d"), "Due Date": datetime.now().strftime("%Y-%m-%d"), "Comments": "AI extracted", "Attachments": ""}])], ignore_index=True)
-                                added += 1
-                        save_data(st.session_state.task_db, "tasks")
-                        st.session_state.ai_suggestions = []
-                        st.session_state.inline_msg = {"loc": "ai_img", "msg": f"✅ {added} task(s) imported from the document!"}
-                        st.rerun()
+        # --- EXTRACT FROM IMAGE ---
+        st.markdown("#### 📷 Extract Tasks from Minutes (Image)")
+        img_file = st.file_uploader("Upload Minutes", type=["jpg", "png"])
+        if st.button("🔍 Analyze Minutes"):
+            if gemini_key and img_file:
+                with st.spinner("Analyzing document..."):
+                    b64 = base64.b64encode(img_file.read()).decode('utf-8')
+                    prompt = f"Extract tasks as JSON list with keys: Project, Task Name, Assignee. Use only these names: {user_list}"
+                    res = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}", json={"contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "image/jpeg", "data": b64}}]}]}).json()
+                    if 'candidates' in res: st.session_state.ai_suggestions = json.loads(res['candidates'][0]['content']['parts'][0]['text'].replace("```json","").replace("```","").strip())
+        
+        if st.session_state.ai_suggestions and st.session_state.is_admin:
+            show_inline_msg("ai_img") 
+            with st.form("img_approval"):
+                st.write("**Select items to import into Workspace:**")
+                img_sels = [st.checkbox(f"{it['Project']} | {it['Task Name']} ({it['Assignee']})", value=True, key=f"img_c_{i}") for i, it in enumerate(st.session_state.ai_suggestions)]
+                if st.form_submit_button("✅ Approve Selected"):
+                    added = 0
+                    for i, sel in enumerate(img_sels):
+                        if sel: 
+                            st.session_state.task_db = pd.concat([st.session_state.task_db, pd.DataFrame([{"Project": st.session_state.ai_suggestions[i]['Project'], "Task Name": st.session_state.ai_suggestions[i]['Task Name'], "Assignee": st.session_state.ai_suggestions[i]['Assignee'], "Status": "Pending", "Date Added": datetime.now().strftime("%Y-%m-%d"), "Due Date": datetime.now().strftime("%Y-%m-%d"), "Comments": "AI extracted", "Attachments": ""}])], ignore_index=True)
+                            added += 1
+                    save_data(st.session_state.task_db, "tasks")
+                    st.session_state.ai_suggestions = []
+                    st.session_state.inline_msg = {"loc": "ai_img", "msg": f"✅ {added} task(s) imported from the document!"}
+                    st.rerun()
 
-            st.divider()
+        st.divider()
 
-            # --- EXTRACT FROM CHAT ---
-            st.markdown("#### 💬 Extract Tasks from Chat logs")
-            if st.button("🧠 Analyze Chat Logs"): # <--- FIXED HERE
-                if gemini_key and not st.session_state.chat_db.empty:
-                    with st.spinner("Mining chat..."):
-                        transcript = "\n".join([f"{r['User']}: {r['Message']}" for _, r in st.session_state.chat_db.tail(30).iterrows()])
-                        prompt = f"Extract tasks from chat as JSON list with keys: Project, Task Name, Assignee. Names: {user_list}\n\nCHAT:\n{transcript}"
-                        res = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}", json={"contents": [{"parts": [{"text": prompt}]}]}).json()
-                        if 'candidates' in res: st.session_state.chat_ai_suggestions = json.loads(res['candidates'][0]['content']['parts'][0]['text'].replace("```json","").replace("```","").strip())
+        # --- EXTRACT FROM CHAT ---
+        st.markdown("#### 💬 Extract Tasks from Chat logs")
+        if st.button("🧠 Analyze Chat Logs"):
+            if gemini_key and not st.session_state.chat_db.empty:
+                with st.spinner("Mining chat..."):
+                    transcript = "\n".join([f"{r['User']}: {r['Message']}" for _, r in st.session_state.chat_db.tail(30).iterrows()])
+                    prompt = f"Extract tasks from chat as JSON list with keys: Project, Task Name, Assignee. Names: {user_list}\n\nCHAT:\n{transcript}"
+                    res = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}", json={"contents": [{"parts": [{"text": prompt}]}]}).json()
+                    if 'candidates' in res: st.session_state.chat_ai_suggestions = json.loads(res['candidates'][0]['content']['parts'][0]['text'].replace("```json","").replace("```","").strip())
 
-            if st.session_state.chat_ai_suggestions and st.session_state.is_admin:
-                show_inline_msg("ai_chat") 
-                with st.form("chat_approval"):
-                    st.write("**Select chat promises to import:**")
-                    chat_sels = [st.checkbox(f"{it['Project']} | {it['Task Name']} ({it['Assignee']})", value=True, key=f"chat_c_{i}") for i, it in enumerate(st.session_state.chat_ai_suggestions)]
-                    if st.form_submit_button("✅ Approve Selected"):
-                        added = 0
-                        for i, sel in enumerate(chat_sels):
-                            if sel: 
-                                st.session_state.task_db = pd.concat([st.session_state.task_db, pd.DataFrame([{"Project": st.session_state.chat_ai_suggestions[i]['Project'], "Task Name": st.session_state.chat_ai_suggestions[i]['Task Name'], "Assignee": st.session_state.chat_ai_suggestions[i]['Assignee'], "Status": "Pending", "Date Added": datetime.now().strftime("%Y-%m-%d"), "Due Date": datetime.now().strftime("%Y-%m-%d"), "Comments": "Chat AI extracted", "Attachments": ""}])], ignore_index=True)
-                                added += 1
-                        save_data(st.session_state.task_db, "tasks")
-                        st.session_state.chat_ai_suggestions = []
-                        st.session_state.inline_msg = {"loc": "ai_chat", "msg": f"✅ {added} task(s) automatically extracted from chat!"}
-                        st.rerun()
+        if st.session_state.chat_ai_suggestions and st.session_state.is_admin:
+            show_inline_msg("ai_chat") 
+            with st.form("chat_approval"):
+                st.write("**Select chat promises to import:**")
+                chat_sels = [st.checkbox(f"{it['Project']} | {it['Task Name']} ({it['Assignee']})", value=True, key=f"chat_c_{i}") for i, it in enumerate(st.session_state.chat_ai_suggestions)]
+                if st.form_submit_button("✅ Approve Selected"):
+                    added = 0
+                    for i, sel in enumerate(chat_sels):
+                        if sel: 
+                            st.session_state.task_db = pd.concat([st.session_state.task_db, pd.DataFrame([{"Project": st.session_state.chat_ai_suggestions[i]['Project'], "Task Name": st.session_state.chat_ai_suggestions[i]['Task Name'], "Assignee": st.session_state.chat_ai_suggestions[i]['Assignee'], "Status": "Pending", "Date Added": datetime.now().strftime("%Y-%m-%d"), "Due Date": datetime.now().strftime("%Y-%m-%d"), "Comments": "Chat AI extracted", "Attachments": ""}])], ignore_index=True)
+                            added += 1
+                    save_data(st.session_state.task_db, "tasks")
+                    st.session_state.chat_ai_suggestions = []
+                    st.session_state.inline_msg = {"loc": "ai_chat", "msg": f"✅ {added} task(s) automatically extracted from chat!"}
+                    st.rerun()
 
+    # ==========================================
     # --- TAB 7: ADMIN ---
-    if st.session_state.is_admin:
-        tab_index += 1
-        with tab_list[tab_index]:
-            st.subheader("🛡️ Admin Console")
-            
-            st.markdown("#### 👥 User Management")
-            if not st.session_state.user_db.empty: st.dataframe(st.session_state.user_db, hide_index=True, use_container_width=True)
-            
-            show_inline_msg("admin_edit") 
-            user_to_update = st.selectbox("Select User to Edit", ["-- Select User --"] + st.session_state.user_db["Full Name"].tolist())
-            if user_to_update != "-- Select User --":
-                curr_user = st.session_state.user_db[st.session_state.user_db["Full Name"] == user_to_update].iloc[0]
-                idx = st.session_state.user_db.index[st.session_state.user_db["Full Name"] == user_to_update].tolist()[0]
-                with st.form("update_user_details"):
-                    c1, c2 = st.columns(2)
-                    n_n = c1.text_input("Name", value=curr_user["Full Name"])
-                    n_e = c2.text_input("Email", value=curr_user["Email"])
-                    n_p = c1.text_input("Phone", value=str(curr_user["Phone Number"]).replace('nan',''))
-                    n_s = c2.selectbox("Status", ["Active", "Suspended", "Blocked"], index=["Active", "Suspended", "Blocked"].index(curr_user["Status"]))
-                    n_r = c1.selectbox("Role", ["Standard", "Admin", "Viewer Only"], index=["Standard", "Admin", "Viewer Only"].index(curr_user["Role"]))
-                    n_pw = c2.text_input("Password", value=curr_user["Password"], type="password")
-                    if st.form_submit_button("Save Changes"):
-                        st.session_state.user_db.loc[idx] = [n_n, n_e, n_p, n_s, n_r, n_pw]
-                        save_data(st.session_state.user_db, "users")
-                        st.session_state.inline_msg = {"loc": "admin_edit", "msg": f"✅ Profile for {n_n} updated successfully."}
-                        st.rerun()
+    # ==========================================
+    elif active_tab == "🛡️ Admin Console" and st.session_state.is_admin:
+        st.subheader("🛡️ Admin Console")
+        
+        st.markdown("#### 👥 User Management")
+        if not st.session_state.user_db.empty: st.dataframe(st.session_state.user_db, hide_index=True, use_container_width=True)
+        
+        show_inline_msg("admin_edit") 
+        user_to_update = st.selectbox("Select User to Edit", ["-- Select User --"] + st.session_state.user_db["Full Name"].tolist())
+        if user_to_update != "-- Select User --":
+            curr_user = st.session_state.user_db[st.session_state.user_db["Full Name"] == user_to_update].iloc[0]
+            idx = st.session_state.user_db.index[st.session_state.user_db["Full Name"] == user_to_update].tolist()[0]
+            with st.form("update_user_details"):
+                c1, c2 = st.columns(2)
+                n_n = c1.text_input("Name", value=curr_user["Full Name"])
+                n_e = c2.text_input("Email", value=curr_user["Email"])
+                n_p = c1.text_input("Phone", value=str(curr_user["Phone Number"]).replace('nan',''))
+                n_s = c2.selectbox("Status", ["Active", "Suspended", "Blocked"], index=["Active", "Suspended", "Blocked"].index(curr_user["Status"]))
+                n_r = c1.selectbox("Role", ["Standard", "Admin", "Viewer Only"], index=["Standard", "Admin", "Viewer Only"].index(curr_user["Role"]))
+                n_pw = c2.text_input("Password", value=curr_user["Password"], type="password")
+                if st.form_submit_button("Save Changes"):
+                    st.session_state.user_db.loc[idx] = [n_n, n_e, n_p, n_s, n_r, n_pw]
+                    save_data(st.session_state.user_db, "users")
+                    st.session_state.inline_msg = {"loc": "admin_edit", "msg": f"✅ Profile for {n_n} updated successfully."}
+                    st.rerun()
 
 # --- END OF FILE ---
