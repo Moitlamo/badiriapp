@@ -391,4 +391,167 @@ else:
                                 with s_edit_col:
                                     if not active_subtasks.empty:
                                         sub_dict = {idx: row["Subtask Name"] for idx, row in active_subtasks.iterrows()}
-                                        sub_idx = st
+                                        sub_idx = st.selectbox("Update Subtask", options=list(sub_dict.keys()), format_func=lambda x: sub_dict[x])
+                                        if sub_idx is not None:
+                                            with st.form("update_sub_form"):
+                                                new_s_status = st.selectbox("Status", ["Pending", "In Progress", "Completed"])
+                                                if st.form_submit_button("Save Subtask"):
+                                                    st.session_state.subtask_db.at[sub_idx, "Status"] = new_s_status
+                                                    save_data(st.session_state.subtask_db, SUBTASK_FILE)
+                                                    st.rerun()
+            tab_index += 1
+
+        # --- TAB 3: REPORTS ---
+        with tab_list[tab_index]:
+            if df.empty:
+                st.info("No tasks to report on.")
+            else:
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Total Main Tasks", len(df))
+                c2.metric("✅ Tasks Completed", len(df[df["Status"] == "Completed"]))
+                c3.metric("Total Subtasks", len(sub_df_all))
+                
+                st.divider()
+                st.subheader("📊 Project Health Dashboard")
+                for proj in df["Project"].unique():
+                    p_df = df[df["Project"] == proj]
+                    p_tot = len(p_df)
+                    p_comp = len(p_df[p_df["Status"] == "Completed"])
+                    p_pct = (p_comp / p_tot) if p_tot > 0 else 0.0
+                    st.write(f"**{proj}** ({p_comp}/{p_tot} Tasks Completed)")
+                    st.progress(p_pct)
+                    st.write("")
+                
+                st.divider()
+                st.subheader("📈 Team Performance & Capacity Matrix")
+                all_assignments = pd.concat([df[["Assignee", "Status"]], sub_df_all[["Assignee", "Status"]]], ignore_index=True)
+                
+                matrix_data = []
+                for user in all_assignments["Assignee"].dropna().unique():
+                    u_tasks = all_assignments[all_assignments["Assignee"] == user]
+                    u_tot = len(u_tasks)
+                    u_comp = len(u_tasks[u_tasks["Status"] == "Completed"])
+                    u_pct = int((u_comp / u_tot) * 100) if u_tot > 0 else 0
+                    matrix_data.append({"Team Member": user, "Total Load": u_tot, "Completed": u_comp, "Efficiency %": u_pct})
+                
+                if matrix_data:
+                    matrix_df = pd.DataFrame(matrix_data)
+                    st.dataframe(
+                        matrix_df,
+                        column_config={
+                            "Efficiency %": st.column_config.ProgressColumn("Efficiency Rate", format="%d%%", min_value=0, max_value=100)
+                        },
+                        hide_index=True, use_container_width=True
+                    )
+                
+                st.divider()
+                st.subheader("📥 Export Center")
+                ex1, ex2 = st.columns(2)
+                with ex1:
+                    if HAS_PPTX:
+                        st.download_button("📊 Download PowerPoint", data=create_ppt(df, sub_df_all), file_name=f"Report_{datetime.now().strftime('%Y%m%d')}.pptx")
+                with ex2:
+                    st.download_button("📈 Download CSV Export", data=df.to_csv(index=False).encode('utf-8'), file_name=f"Data_{datetime.now().strftime('%Y%m%d')}.csv")
+        tab_index += 1
+
+        # --- TAB 4: AI ---
+        if st.session_state.user_role != "Viewer Only":
+            with tab_list[tab_index]:
+                st.subheader("🤖 AI Intelligence")
+                gemini_key = st.text_input("Gemini API Key", type="password")
+                
+                st.markdown("#### 📷 Extract from Image")
+                img_file = st.file_uploader("Upload Minutes", type=["jpg", "png"])
+                if st.button("🔍 Analyze Minutes"):
+                    if gemini_key and img_file:
+                        with st.spinner("Analyzing document..."):
+                            b64 = base64.b64encode(img_file.read()).decode('utf-8')
+                            prompt = f"Extract tasks as JSON list with keys: Project, Task Name, Assignee. Use only these names: {user_list}"
+                            res = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}", json={"contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "image/jpeg", "data": b64}}]}]}).json()
+                            if 'candidates' in res: st.session_state.ai_suggestions = json.loads(res['candidates'][0]['content']['parts'][0]['text'].replace("```json","").replace("```","").strip())
+                
+                if st.session_state.ai_suggestions and st.session_state.is_admin:
+                    with st.form("img_approval"):
+                        st.write("**Select items to import into Workspace:**")
+                        img_sels = [st.checkbox(f"{it['Project']} | {it['Task Name']} ({it['Assignee']})", value=True, key=f"img_c_{i}") for i, it in enumerate(st.session_state.ai_suggestions)]
+                        if st.form_submit_button("✅ Approve Selected"):
+                            for i, sel in enumerate(img_sels):
+                                if sel: st.session_state.task_db = pd.concat([st.session_state.task_db, pd.DataFrame([{"Project": st.session_state.ai_suggestions[i]['Project'], "Task Name": st.session_state.ai_suggestions[i]['Task Name'], "Assignee": st.session_state.ai_suggestions[i]['Assignee'], "Status": "Pending", "Date Added": datetime.now().strftime("%Y-%m-%d"), "Due Date": datetime.now().strftime("%Y-%m-%d"), "Comments": "AI extracted"}])], ignore_index=True)
+                            save_data(st.session_state.task_db, DB_FILE)
+                            st.session_state.ai_suggestions = []
+                            st.rerun()
+
+                st.divider()
+                st.markdown("#### 💬 Extract from Chat")
+                if st.button("🧠 Analyze Chat Logs"):
+                    if gemini_key and not st.session_state.chat_db.empty:
+                        with st.spinner("Mining chat..."):
+                            transcript = "\n".join([f"{r['User']}: {r['Message']}" for _, r in st.session_state.chat_db.tail(30).iterrows()])
+                            prompt = f"Extract tasks from chat as JSON list with keys: Project, Task Name, Assignee. Names: {user_list}\n\nCHAT:\n{transcript}"
+                            res = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}", json={"contents": [{"parts": [{"text": prompt}]}]}).json()
+                            if 'candidates' in res: st.session_state.chat_ai_suggestions = json.loads(res['candidates'][0]['content']['parts'][0]['text'].replace("```json","").replace("```","").strip())
+
+                if st.session_state.chat_ai_suggestions and st.session_state.is_admin:
+                    with st.form("chat_approval"):
+                        st.write("**Select chat promises to import:**")
+                        chat_sels = [st.checkbox(f"{it['Project']} | {it['Task Name']} ({it['Assignee']})", value=True, key=f"chat_c_{i}") for i, it in enumerate(st.session_state.chat_ai_suggestions)]
+                        if st.form_submit_button("✅ Approve Selected"):
+                            for i, sel in enumerate(chat_sels):
+                                if sel: st.session_state.task_db = pd.concat([st.session_state.task_db, pd.DataFrame([{"Project": st.session_state.chat_ai_suggestions[i]['Project'], "Task Name": st.session_state.chat_ai_suggestions[i]['Task Name'], "Assignee": st.session_state.chat_ai_suggestions[i]['Assignee'], "Status": "Pending", "Date Added": datetime.now().strftime("%Y-%m-%d"), "Due Date": datetime.now().strftime("%Y-%m-%d"), "Comments": "Chat AI extracted"}])], ignore_index=True)
+                            save_data(st.session_state.task_db, DB_FILE)
+                            st.session_state.chat_ai_suggestions = []
+                            st.rerun()
+            tab_index += 1
+
+        # --- TAB 5: ADMIN ---
+        if st.session_state.is_admin:
+            with tab_list[tab_index]:
+                st.subheader("Admin Console")
+                if not st.session_state.user_db.empty: st.dataframe(st.session_state.user_db, hide_index=True, use_container_width=True)
+                
+                st.divider()
+                st.write("**📝 Edit User**")
+                user_to_update = st.selectbox("Select User", ["-- Select User --"] + st.session_state.user_db["Full Name"].tolist())
+                if user_to_update != "-- Select User --":
+                    curr_user = st.session_state.user_db[st.session_state.user_db["Full Name"] == user_to_update].iloc[0]
+                    idx = st.session_state.user_db.index[st.session_state.user_db["Full Name"] == user_to_update].tolist()[0]
+                    with st.form("update_user_details"):
+                        c1, c2 = st.columns(2)
+                        n_n = c1.text_input("Name", value=curr_user["Full Name"])
+                        n_e = c2.text_input("Email", value=curr_user["Email"])
+                        n_p = c1.text_input("Phone", value=str(curr_user["Phone Number"]).replace('nan',''))
+                        n_s = c2.selectbox("Status", ["Active", "Suspended", "Blocked"], index=["Active", "Suspended", "Blocked"].index(curr_user["Status"]))
+                        n_r = c1.selectbox("Role", ["Standard", "Admin", "Viewer Only"], index=["Standard", "Admin", "Viewer Only"].index(curr_user["Role"]))
+                        n_pw = c2.text_input("Password", value=curr_user["Password"], type="password")
+                        if st.form_submit_button("Save"):
+                            st.session_state.user_db.loc[idx] = [n_n, n_e, n_p, n_s, n_r, n_pw]
+                            save_data(st.session_state.user_db, USER_FILE)
+                            st.rerun()
+
+    # --- NATIVE CHAT PANEL (Right Side) ---
+    with chat_col:
+        st.markdown('### 💬 Team Chat')
+        st.session_state.chat_db = load_data(CHAT_FILE, ["Timestamp", "User", "Message"])
+        
+        chat_container = st.container(height=500)
+        with chat_container:
+            if st.session_state.chat_db.empty:
+                st.caption("No messages yet.")
+            else:
+                for _, msg in st.session_state.chat_db.tail(20).iterrows():
+                    is_me = (msg["User"] == st.session_state.current_user)
+                    with st.chat_message("user" if is_me else "assistant"):
+                        st.markdown(f"**{msg['User']}** <span style='font-size:0.8em; color:gray;'>({msg['Timestamp']})</span>", unsafe_allow_html=True)
+                        st.write(msg["Message"])
+                
+        with st.form("chat_form", clear_on_submit=True):
+            m = st.text_input("Message...")
+            c1, c2 = st.columns(2)
+            if c1.form_submit_button("Send") and m:
+                new_c = pd.DataFrame([{"Timestamp": datetime.now().strftime("%H:%M"), "User": st.session_state.current_user, "Message": m}])
+                st.session_state.chat_db = pd.concat([st.session_state.chat_db, new_c], ignore_index=True)
+                save_data(st.session_state.chat_db, CHAT_FILE)
+                st.rerun()
+            if c2.form_submit_button("Refresh"): st.rerun()
+
+# --- END OF FILE ---
