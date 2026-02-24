@@ -16,7 +16,7 @@ try:
 except ImportError:
     HAS_PPTX = False
 
-# Try to load Plotly for the Calendar Timeline
+# Try to load Plotly for the Calendar Timeline & Analytics
 try:
     import plotly.express as px
     HAS_PLOTLY = True
@@ -396,7 +396,6 @@ else:
             st.progress(pct)
             st.write("")
             
-            # STICKY TABS for Workspace Sub-Menu
             pw_tab = st.radio("Workspace Operations", ["🗂️ Project Board", "➕ Add New Task", "⚙️ Edit Tasks & Subtasks"], horizontal=True, label_visibility="collapsed", key="pw_nav")
             st.write("")
             
@@ -539,58 +538,115 @@ else:
                     st.dataframe(upcoming[["Project", "Task Display", "Assignee", "Status", "Due Date"]].rename(columns={"Task Display": "Task"}), hide_index=True, use_container_width=True)
 
     # ==========================================
-    # --- TAB 4: REPORTS ---
+    # --- TAB 4: REPORTS (UPGRADED) ---
     # ==========================================
     elif active_tab == "📊 Reports":
-        if df.empty:
-            st.info("No tasks to report on.")
+        st.subheader("📊 Executive Analytics Dashboard")
+        
+        # 1. Executive Filtering
+        all_projects = ["All Projects"] + df["Project"].unique().tolist()
+        filter_proj = st.selectbox("🎛️ Filter by Project:", all_projects)
+        
+        if filter_proj == "All Projects":
+            rep_df = df.copy()
+            rep_sub_df = sub_df_all.copy()
         else:
+            rep_df = df[df["Project"] == filter_proj].copy()
+            rep_sub_df = sub_df_all[sub_df_all["Project"] == filter_proj].copy()
+            
+        if rep_df.empty and rep_sub_df.empty:
+            st.info("No data available for the selected filters.")
+        else:
+            # Metrics
             c1, c2, c3 = st.columns(3)
-            c1.metric("Total Main Tasks", len(df))
-            c2.metric("✅ Tasks Completed", len(df[df["Status"] == "Completed"]))
-            c3.metric("Total Subtasks", len(sub_df_all))
+            c1.metric("Total Main Tasks", len(rep_df))
+            c2.metric("✅ Tasks Completed", len(rep_df[rep_df["Status"] == "Completed"]))
+            c3.metric("Total Subtasks", len(rep_sub_df))
             
             st.divider()
-            st.subheader("📊 Project Health Dashboard")
-            for proj in df["Project"].unique():
-                p_df = df[df["Project"] == proj]
-                p_tot = len(p_df)
-                p_comp = len(p_df[p_df["Status"] == "Completed"])
-                p_pct = (p_comp / p_tot) if p_tot > 0 else 0.0
-                st.write(f"**{proj}** ({p_comp}/{p_tot} Tasks Completed)")
-                st.progress(p_pct)
-                st.write("")
+            
+            # Combine tasks for holistic analytics
+            combined_rep = pd.concat([
+                rep_df[["Task Name", "Assignee", "Status", "Due Date", "Project"]].rename(columns={"Task Name": "Task Display"}),
+                rep_sub_df[["Subtask Name", "Assignee", "Status", "Due Date", "Project"]].rename(columns={"Subtask Name": "Task Display"})
+            ], ignore_index=True)
+            
+            # 2. Interactive Analytics (Charts)
+            if HAS_PLOTLY and not combined_rep.empty:
+                st.markdown("#### 📈 Visual Analytics")
+                ch1, ch2 = st.columns(2)
+                
+                with ch1:
+                    st.write("**Task Status Distribution**")
+                    status_counts = combined_rep["Status"].value_counts().reset_index()
+                    status_counts.columns = ["Status", "Count"]
+                    fig_pie = px.pie(status_counts, names="Status", values="Count", hole=0.4, color="Status", 
+                                     color_discrete_map={"Completed":"#22c55e", "In Progress":"#3b82f6", "Pending":"#f59e0b"})
+                    st.plotly_chart(fig_pie, use_container_width=True)
+                    
+                with ch2:
+                    st.write("**Team Workload (Active vs Completed)**")
+                    workload = combined_rep.groupby(["Assignee", "Status"]).size().reset_index(name="Tasks")
+                    fig_bar = px.bar(workload, x="Assignee", y="Tasks", color="Status", text="Tasks", barmode="stack",
+                                     color_discrete_map={"Completed":"#22c55e", "In Progress":"#3b82f6", "Pending":"#f59e0b"})
+                    st.plotly_chart(fig_bar, use_container_width=True)
             
             st.divider()
-            st.subheader("📈 Team Performance & Capacity Matrix")
-            all_assignments = pd.concat([df[["Assignee", "Status"]], sub_df_all[["Assignee", "Status"]]], ignore_index=True)
             
-            matrix_data = []
-            for user in all_assignments["Assignee"].dropna().unique():
-                u_tasks = all_assignments[all_assignments["Assignee"] == user]
-                u_tot = len(u_tasks)
-                u_comp = len(u_tasks[u_tasks["Status"] == "Completed"])
-                u_pct = int((u_comp / u_tot) * 100) if u_tot > 0 else 0
-                matrix_data.append({"Team Member": user, "Total Load": u_tot, "Completed": u_comp, "Efficiency %": u_pct})
+            # 3. The "Red Zone" (Overdue Task Alerts)
+            st.markdown("#### 🚨 The 'Red Zone' (Overdue Tasks)")
+            combined_rep["Safe Due"] = pd.to_datetime(combined_rep["Due Date"], errors="coerce")
+            today_ts = pd.Timestamp.now().normalize()
             
-            if matrix_data:
-                matrix_df = pd.DataFrame(matrix_data)
-                st.dataframe(
-                    matrix_df,
-                    column_config={
-                        "Efficiency %": st.column_config.ProgressColumn("Efficiency Rate", format="%d%%", min_value=0, max_value=100)
-                    },
-                    hide_index=True, use_container_width=True
-                )
+            overdue_df = combined_rep[(combined_rep["Safe Due"] < today_ts) & (combined_rep["Status"] != "Completed")].copy()
+            if overdue_df.empty:
+                st.success("✅ Excellent! No tasks are currently overdue.")
+            else:
+                overdue_df["Days Overdue"] = (today_ts - overdue_df["Safe Due"]).dt.days
+                overdue_display = overdue_df[["Project", "Task Display", "Assignee", "Status", "Days Overdue"]].sort_values("Days Overdue", ascending=False)
+                st.error(f"⚠️ Warning: You have {len(overdue_display)} task(s) past their deadline!")
+                st.dataframe(overdue_display, hide_index=True, use_container_width=True)
+                
+            st.divider()
+            
+            col_hp, col_tm = st.columns(2)
+            with col_hp:
+                st.markdown("#### 📊 Project Health")
+                for proj in rep_df["Project"].unique():
+                    p_df = rep_df[rep_df["Project"] == proj]
+                    p_tot = len(p_df)
+                    p_comp = len(p_df[p_df["Status"] == "Completed"])
+                    p_pct = (p_comp / p_tot) if p_tot > 0 else 0.0
+                    st.write(f"**{proj}** ({p_comp}/{p_tot} Main Tasks)")
+                    st.progress(p_pct)
+                    st.write("")
+                    
+            with col_tm:
+                st.markdown("#### 📈 Team Matrix")
+                matrix_data = []
+                for user in combined_rep["Assignee"].dropna().unique():
+                    u_tasks = combined_rep[combined_rep["Assignee"] == user]
+                    u_tot = len(u_tasks)
+                    u_comp = len(u_tasks[u_tasks["Status"] == "Completed"])
+                    u_pct = int((u_comp / u_tot) * 100) if u_tot > 0 else 0
+                    matrix_data.append({"Team Member": user, "Total Load": u_tot, "Completed": u_comp, "Efficiency %": u_pct})
+                
+                if matrix_data:
+                    matrix_df = pd.DataFrame(matrix_data)
+                    st.dataframe(
+                        matrix_df,
+                        column_config={"Efficiency %": st.column_config.ProgressColumn("Efficiency Rate", format="%d%%", min_value=0, max_value=100)},
+                        hide_index=True, use_container_width=True
+                    )
             
             st.divider()
             st.subheader("📥 Export Center")
             ex1, ex2 = st.columns(2)
             with ex1:
                 if HAS_PPTX:
-                    st.download_button("📊 Download PowerPoint", data=create_ppt(df, sub_df_all), file_name=f"Report_{datetime.now().strftime('%Y%m%d')}.pptx")
+                    st.download_button("📊 Download PowerPoint", data=create_ppt(rep_df, rep_sub_df), file_name=f"Report_{datetime.now().strftime('%Y%m%d')}.pptx")
             with ex2:
-                st.download_button("📈 Download CSV Export", data=df.to_csv(index=False).encode('utf-8'), file_name=f"Data_{datetime.now().strftime('%Y%m%d')}.csv")
+                st.download_button("📈 Download CSV Export", data=rep_df.to_csv(index=False).encode('utf-8'), file_name=f"Data_{datetime.now().strftime('%Y%m%d')}.csv")
 
     # ==========================================
     # --- TAB 5: TEAM COMMUNICATIONS ---
@@ -599,7 +655,6 @@ else:
         st.subheader("💬 Team Communications")
         st.markdown("Chat with your team in real-time or send formal, secure internal mail.")
         
-        # Sticky navigation for Comm Tabs
         comm_tab = st.radio("Communication Actions", ["💬 Global Team Chat", "📥 Mail Inbox", "📤 Compose Mail"], horizontal=True, label_visibility="collapsed", key="comm_nav")
         st.write("")
         
